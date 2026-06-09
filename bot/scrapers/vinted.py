@@ -42,36 +42,25 @@ class VintedScraper:
     def __init__(self, client: ScrapeClient):
         self.client = client
         self.settings = get_settings()
-        self._cookies: dict[str, str] = {}
         self._domain = self.settings.vinted_domain
+        self._session_ready = False
 
     @property
     def base_url(self) -> str:
         return f"https://{self._domain}"
 
     async def _ensure_session(self, force: bool = False) -> None:
-        """Récupère/rafraîchit les cookies de session en visitant la home."""
-        if self._cookies and not force:
-            return
-        # cookie pré-fourni via .env ?
-        if self.settings.vinted_session_cookie and not force:
-            self._cookies = self._parse_cookie_header(self.settings.vinted_session_cookie)
-            if self._cookies:
-                return
-        await self.client.start()
-        resp = await self.client.get(self.base_url, min_interval=5.0)
-        jar = resp.cookies
-        self._cookies = {k: jar.get(k) for k in jar.keys()}  # type: ignore[misc]
-        log.info("Session Vinted initialisée (%d cookies)", len(self._cookies))
+        """Visite la home pour que le cookie jar httpx récupère access_token_web.
 
-    @staticmethod
-    def _parse_cookie_header(header: str) -> dict[str, str]:
-        out: dict[str, str] = {}
-        for part in header.split(";"):
-            if "=" in part:
-                k, v = part.strip().split("=", 1)
-                out[k] = v
-        return out
+        On délègue la gestion des cookies au jar partagé du ScrapeClient (httpx les
+        renvoie automatiquement) — c'est ce qui fait passer l'API de 401 à 200.
+        """
+        if self._session_ready and not force:
+            return
+        await self.client.start()
+        await self.client.get(self.base_url, min_interval=5.0)
+        self._session_ready = True
+        log.info("Session Vinted initialisée (cookies dans le jar httpx)")
 
     async def search_active(
         self, query: str, *, per_page: int = 24, max_price: float | None = None
@@ -88,25 +77,16 @@ class VintedScraper:
         url = f"{self.base_url}{VINTED_KEYS['catalog_path']}"
         headers = {"Accept": "application/json", "Referer": self.base_url}
         try:
-            resp = await self.client.get(
-                url, params=params, headers={**headers, **self._cookie_header()}
-            )
+            resp = await self.client.get(url, params=params, headers=headers)
         except httpx.HTTPStatusError as exc:
-            if exc.response.status_code in (401, 403):  # token expiré → refresh une fois
-                log.info("Token Vinted expiré, rafraîchissement…")
+            if exc.response.status_code in (401, 403):  # token expiré → re-visite la home
+                log.info("Token Vinted expiré, rafraîchissement de la session…")
                 await self._ensure_session(force=True)
-                resp = await self.client.get(
-                    url, params=params, headers={**headers, **self._cookie_header()}
-                )
+                resp = await self.client.get(url, params=params, headers=headers)
             else:
                 raise
         data = resp.json()
         return self._parse_items(data)
-
-    def _cookie_header(self) -> dict[str, str]:
-        if not self._cookies:
-            return {}
-        return {"Cookie": "; ".join(f"{k}={v}" for k, v in self._cookies.items())}
 
     def _parse_items(self, data: dict) -> list[Listing]:
         k = VINTED_KEYS

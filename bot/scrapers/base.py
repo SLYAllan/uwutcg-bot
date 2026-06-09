@@ -26,12 +26,22 @@ from typing import Any
 import httpx
 from tenacity import (
     retry,
-    retry_if_exception_type,
+    retry_if_exception,
     stop_after_attempt,
     wait_exponential,
 )
 
 log = logging.getLogger(__name__)
+
+
+def _is_retryable(exc: BaseException) -> bool:
+    """Réessaye les erreurs réseau et les 5xx/429 ; PAS les autres 4xx (401/403/404…)."""
+    if isinstance(exc, httpx.TransportError):
+        return True
+    if isinstance(exc, httpx.HTTPStatusError):
+        code = exc.response.status_code
+        return code == 429 or code >= 500
+    return False
 
 # User-agents réalistes (desktop récents). Étendre au besoin.
 USER_AGENTS = [
@@ -167,7 +177,7 @@ class ScrapeClient:
 
     # --- requêtes httpx (statique / JSON) ------------------------------------
     @retry(
-        retry=retry_if_exception_type((httpx.TransportError, httpx.HTTPStatusError)),
+        retry=retry_if_exception(_is_retryable),
         wait=wait_exponential(multiplier=1, min=2, max=30),
         stop=stop_after_attempt(4),
         reraise=True,
