@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -46,6 +46,19 @@ class Settings(BaseSettings):
     db_path: str = Field(default="data/bot.db", alias="DB_PATH")
     knowledge_dir: str = Field(default="knowledge", alias="KNOWLEDGE_DIR")
     pricing_config: str = Field(default="pricing.yaml", alias="PRICING_CONFIG")
+
+    @field_validator(
+        "discord_guild_id",
+        "default_track_channel_id",
+        "daily_digest_channel_id",
+        mode="before",
+    )
+    @classmethod
+    def _empty_str_to_none(cls, v):
+        """Une variable .env vide ('') doit valoir None, pas planter le parsing int."""
+        if isinstance(v, str) and v.strip() == "":
+            return None
+        return v
 
     @property
     def ebay_oauth_base(self) -> str:

@@ -1,6 +1,7 @@
 import pytest
 
 from bot.scrapers.base import parse_price
+from bot.scrapers.japan import fromjapan_url, parse_mercari_price
 from bot.services.fx_wise import _extract_wise_rate
 from bot.services.knowledge import split_sections
 from bot.services.price_monitor import trend_pct, window_prices
@@ -23,6 +24,29 @@ def test_parse_price(text, expected):
         assert parse_price(text) is None
     else:
         assert parse_price(text) == pytest.approx(expected)
+
+
+@pytest.mark.parametrize(
+    "text,amount,currency",
+    [
+        ("€56.93", 56.93, "EUR"),
+        ("¥135,999", 135999.0, "JPY"),     # virgule = milliers en yen
+        ("12,000円", 12000.0, "JPY"),
+        ("€1.234,56", 1234.56, "EUR"),
+        ("", None, "JPY"),
+    ],
+)
+def test_parse_mercari_price(text, amount, currency):
+    a, c = parse_mercari_price(text)
+    assert c == currency
+    if amount is None:
+        assert a is None
+    else:
+        assert a == pytest.approx(amount)
+
+
+def test_fromjapan_url():
+    assert fromjapan_url("m12345") == "https://www.fromjapan.co.jp/japan/en/mercari/item/m12345"
 
 
 def test_extract_wise_rate_list():

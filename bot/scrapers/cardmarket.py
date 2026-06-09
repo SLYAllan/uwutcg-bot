@@ -12,6 +12,7 @@ Trois usages :
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass, field
 from statistics import median
 from urllib.parse import quote
@@ -30,16 +31,20 @@ CM_GAMES = {
     "riftbound": "Riftbound",  # ⚠️ à confirmer (Cardmarket peut utiliser un autre libellé)
 }
 
-# --- ⚠️ Sélecteurs (VÉRIFIER EN PROD) ----------------------------------------
+# --- Sélecteurs (vérifiés en live 2026-06-09 pour la recherche) --------------
+# Un lien produit réel a la forme /Products/<Categorie>/<Set>/<Nom> (≥ 3 segments
+# après /Products/). La nav catégorie (/Products/Singles) est ainsi exclue.
+PRODUCT_HREF = re.compile(r"/Products/[^/]+/[^/]+/[^/]+")
+# Le texte du lien produit ressemble à "Dracaufeu  (LOR TG03)À partir de18,00 €".
+PRICE_SPLIT = re.compile(r"À partir de", re.IGNORECASE)
+
+# ⚠️ La page produit détaillée (offres/conditions/langues) garde des sélecteurs à
+#    VÉRIFIER EN PROD — la structure des lignes d'offres n'a pas été revalidée en live.
 CM_SELECTORS = {
-    "search_row": ".table-body > .row, .article-row",
-    "product_link": "a[href*='/Products/']",
     "offer_row": ".article-row",
     "offer_price": ".price-container, .col-offer .price",
     "offer_condition": ".article-condition .badge, span[data-toggle='tooltip']",
     "offer_language": ".icon[data-original-title], .article-condition + span",
-    "offer_seller": ".seller-name, .col-seller a",
-    "info_min_price": "dd.h4, .info-list-container dd",
     "grade_badge": ".badge.professional-grading, .grading-badge",
 }
 
@@ -69,15 +74,27 @@ class CardmarketScraper:
         html = await self.client.render(url, wait_selector="body", min_interval=6.0)
         tree = HTMLParser(html)
         out: list[Listing] = []
-        for link in tree.css(CM_SELECTORS["product_link"])[:limit]:
+        seen: set[str] = set()
+        for link in tree.css("a"):
             href = link.attributes.get("href", "")
-            title = link.text(strip=True)
-            if not href or not title:
+            if not href or "Search" in href or not PRODUCT_HREF.search(href):
                 continue
             full = href if href.startswith("http") else f"https://www.cardmarket.com{href}"
+            if full in seen:
+                continue
+            seen.add(full)
+            # Le texte mélange nom et "À partir deXX,XX €" → on sépare.
+            raw = link.text(strip=True)
+            parts = PRICE_SPLIT.split(raw, maxsplit=1)
+            title = parts[0].strip()
+            price = parse_price(parts[1]) if len(parts) > 1 else None
+            if not title:
+                continue
             out.append(
-                Listing(key=full, platform="cardmarket", title=title, price=None, url=full)
+                Listing(key=full, platform="cardmarket", title=title, price=price, url=full)
             )
+            if len(out) >= limit:
+                break
         return out
 
     # --- détail produit (monitor §3.4) ---------------------------------------
@@ -121,12 +138,12 @@ class CardmarketScraper:
 
     # --- prix le plus bas (EUR) pour une carte -------------------------------
     async def lowest_price(self, query: str, *, game: str = "pokemon") -> float | None:
-        """Prix mini EUR de la 1re carte correspondante (best effort). None si introuvable."""
+        """Prix « à partir de » EUR de la 1re carte correspondante. None si introuvable.
+
+        S'appuie sur la page de recherche (validée en live), pas sur la page produit.
+        """
         results = await self.search(query, limit=1, game=game)
-        if not results:
-            return None
-        detail = await self.product_detail(results[0].url)
-        return detail.lowest_price
+        return results[0].price if results else None
 
     # --- tendance de prix / ventes (§3.2) ------------------------------------
     async def price_trend(self, query_or_url: str) -> SoldStats:

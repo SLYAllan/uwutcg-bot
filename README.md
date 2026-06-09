@@ -96,10 +96,30 @@ domaine, jitter, retry/backoff et le pool Playwright. Pour ajouter une plateform
 3. Renvoyer des objets `Listing` (et `SoldStats` pour les ventes).
 4. Brancher dans le cog concerné.
 
-> ⚠️ **Scrapers non testés en live au build.** Les structures de Vinted (endpoint JSON interne),
-> Cardmarket (HTML derrière Cloudflare), eBay (pages *sold*) et Buyee changent régulièrement.
-> Avant la prod, **re-capturer les sélecteurs/URLs avec Playwright MCP** et corriger les blocs
-> `# ⚠️ VÉRIFIER EN PROD`. L'API Browse eBay (annonces actives) est la voie la plus stable.
+### Smoke-test des scrapers (sans Discord)
+```bash
+python -m scripts.smoke_scrapers            # toutes les sources
+python -m scripts.smoke_scrapers ebay vinted mercari cardmarket riftcodex fx
+```
+Lance chaque source réelle et affiche le résultat (utile pour valider les sélecteurs après
+une évolution de site). Nécessite `playwright install chromium` pour les sources à navigateur.
+
+> **État validé en live (2026-06-09, sur cette machine UE) :**
+> - ✅ **eBay API Browse** (annonces actives), **Vinted** (endpoint JSON interne), **Mercari JP**
+>   (SPA, scroll), **Cardmarket** (recherche : nom + prix « à partir de »), **Riftcodex**, **FX Wise**.
+> - ⚠️ **eBay *sold*** : eBay renvoie une page d'erreur anti-bot en headless → nécessite un
+>   durcissement en prod (proxy résidentiel / acceptation cookies). L'API Browse, elle, est stable.
+> - ⚠️ **Cardmarket page produit détaillée** (`/monitor` : répartition état/langue, gradées/raw) :
+>   sélecteurs d'offres non revalidés — à re-capturer via Playwright MCP. Le **prix mini** vient
+>   de la page de recherche (validée).
+> - Mercari affiche la devise selon la géo du serveur (€ depuis l'UE) → détectée au symbole.
+> Re-capturer les blocs `# ⚠️ VÉRIFIER EN PROD` au besoin.
+
+### Sourcing Japon & FromJapan
+Le scraper `bot/scrapers/japan.py` scanne **Mercari JP en direct** (`jp.mercari.com`). Chaque
+annonce porte un lien **FromJapan** (`/japan/en/mercari/item/<id>`) : les alertes d'arbitrage
+affichent un bouton « Commander sur FromJapan » + « Voir sur Mercari ». La commande/paiement
+final reste côté Allan (le bot ne fait qu'ouvrir la page, comme pour les autres plateformes).
 
 ### eBay watchlist (bouton ➕)
 L'ajout à la watchlist eBay nécessite un **token utilisateur** (OAuth *Authorization Code*),

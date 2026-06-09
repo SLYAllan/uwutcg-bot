@@ -83,9 +83,11 @@ class ArbitrageCog(commands.Cog):
         if resale is None:
             return
         rate = await self.bot.fx.get_rate()
+        # Mercari peut afficher déjà en EUR (géo serveur UE) → pas de conversion dans ce cas.
+        effective_rate = 1.0 if jp.currency == "EUR" else rate.rate
         result = arb.analyze(
             jpy_price=jp.price,
-            fx_rate=rate.rate,
+            fx_rate=effective_rate,
             resale_eur=resale,
             config=self.bot.pricing,
             min_margin=r["min_margin"],
@@ -95,8 +97,23 @@ class ArbitrageCog(commands.Cog):
         channel = self.bot.get_channel(int(r["channel_id"]))
         if channel:
             embed = embeds.arbitrage_embed(result, r["query"])
-            embed.add_field(name="Source JP", value=jp.url[:1024] or "—", inline=False)
-            await channel.send(embed=embed)
+            embed.add_field(name="Annonce Mercari", value=jp.title[:256], inline=False)
+            view = self._sourcing_view(jp)
+            await channel.send(embed=embed, view=view)
+
+    def _sourcing_view(self, jp) -> discord.ui.View:
+        """Boutons lien : commander via FromJapan + voir l'annonce Mercari (§3.10)."""
+        view = discord.ui.View(timeout=None)
+        fj = jp.extra.get("fromjapan_url")
+        if fj:
+            view.add_item(
+                discord.ui.Button(label="Commander sur FromJapan 🛒", style=discord.ButtonStyle.link, url=fj)
+            )
+        if jp.url:
+            view.add_item(
+                discord.ui.Button(label="Voir sur Mercari 🇯🇵", style=discord.ButtonStyle.link, url=jp.url)
+            )
+        return view
 
 
 async def setup(bot: commands.Bot):

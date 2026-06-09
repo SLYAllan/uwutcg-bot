@@ -213,16 +213,19 @@ class ScrapeClient:
         wait_selector: str | None = None,
         min_interval: float | None = None,
         timeout_ms: int = 30000,
+        scroll: int = 0,
+        locale: str = "fr-FR",
     ) -> str:
         """Charge une page via Playwright et renvoie le HTML rendu.
 
-        Utilisé pour Cardmarket (Cloudflare) et tout contenu JS lourd.
+        Utilisé pour Cardmarket (Cloudflare) et tout contenu JS lourd (SPA Mercari).
+        `scroll` : nombre de défilements pour déclencher le lazy-loading (SPA).
         """
         await self._limiter.acquire(self._domain(url), min_interval or self.min_interval)
         browser = await self._ensure_browser()
         context = await browser.new_context(
             user_agent=self._ua(),
-            locale="fr-FR",
+            locale=locale,
             viewport={"width": 1366, "height": 768},
         )
         try:
@@ -239,6 +242,9 @@ class ScrapeClient:
                     await page.wait_for_selector(wait_selector, timeout=timeout_ms)
                 except Exception:  # noqa: BLE001 - sélecteur volatil, on renvoie quand même
                     log.warning("Sélecteur %s absent sur %s", wait_selector, url)
+            for _ in range(scroll):
+                await page.mouse.wheel(0, 2200)
+                await asyncio.sleep(random.uniform(0.8, 1.4))
             # petit délai aléatoire pour imiter un humain
             await asyncio.sleep(random.uniform(0.5, 1.5))
             return await page.content()

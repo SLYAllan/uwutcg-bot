@@ -17,7 +17,7 @@ from bot.db import Database
 from bot.scrapers.base import ScrapeClient
 from bot.scrapers.cardmarket import CardmarketScraper
 from bot.scrapers.ebay import EbayScraper
-from bot.scrapers.japan import JapanScraper
+from bot.scrapers.japan import MercariScraper
 from bot.scrapers.riftcodex import RiftcodexScraper
 from bot.scrapers.vinted import VintedScraper
 from bot.services.fx_wise import WiseFx
@@ -61,7 +61,7 @@ class TrackingBot(commands.Bot):
         self.ebay = EbayScraper(self.client)
         self.vinted = VintedScraper(self.client)
         self.cardmarket = CardmarketScraper(self.client)
-        self.japan = JapanScraper(self.client)
+        self.japan = MercariScraper(self.client)
         self.riftcodex = RiftcodexScraper(self.client)
         self.fx = WiseFx(self.client)
 
