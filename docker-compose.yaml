@@ -24,11 +24,11 @@ services:
       TIMEZONE: ${TIMEZONE:-Europe/Paris}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
     volumes:
-      # Base SQLite : volume NOMMÉ → persiste aux redéploiements (Coolify & docker classique)
+      # Base SQLite : volume NOMMÉ → persiste aux redéploiements (Coolify & docker classique).
+      # knowledge/ et pricing.yaml ne sont PAS montés : ils sont déjà DANS l'image (COPY du
+      # Dockerfile). Les éditer = modifier le repo + redéployer. (Pas de bind host relatif :
+      # Coolify résout les chemins hors du repo cloné → échec de montage.)
       - bot-data:/app/data
-      # Knowledge base & taux : éditables sans rebuild (présents dans le repo)
-      - ./knowledge:/app/knowledge:ro
-      - ./pricing.yaml:/app/pricing.yaml:ro
     logging:
       driver: json-file
       options:
