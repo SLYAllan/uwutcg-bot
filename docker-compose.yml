@@ -4,11 +4,25 @@ services:
     image: uwutcg-tracking-bot:latest
     container_name: uwutcg-bot
     restart: unless-stopped
-    # En local : lit .env. Sur Coolify : les variables sont injectées via l'UI,
-    # donc le fichier n'est pas requis (required: false évite l'erreur si absent).
-    env_file:
-      - path: .env
-        required: false
+    # Variables d'environnement. En local : remplies depuis le fichier .env (chargé
+    # automatiquement par docker compose). Sur Coolify : injectées via l'UI Environment.
+    # La syntaxe « - NOM » prend la valeur de l'environnement (compose lit aussi .env).
+    environment:
+      DISCORD_TOKEN: ${DISCORD_TOKEN:-}
+      DISCORD_APP_ID: ${DISCORD_APP_ID:-}
+      DISCORD_CLIENT_SECRET: ${DISCORD_CLIENT_SECRET:-}
+      DISCORD_GUILD_ID: ${DISCORD_GUILD_ID:-}
+      DEFAULT_TRACK_CHANNEL_ID: ${DEFAULT_TRACK_CHANNEL_ID:-}
+      DAILY_DIGEST_CHANNEL_ID: ${DAILY_DIGEST_CHANNEL_ID:-}
+      EBAY_APP_ID: ${EBAY_APP_ID:-}
+      EBAY_DEV_ID: ${EBAY_DEV_ID:-}
+      EBAY_CERT_ID: ${EBAY_CERT_ID:-}
+      EBAY_MARKETPLACE_ID: ${EBAY_MARKETPLACE_ID:-EBAY_FR}
+      EBAY_ENV: ${EBAY_ENV:-PRODUCTION}
+      VINTED_DOMAIN: ${VINTED_DOMAIN:-www.vinted.fr}
+      VINTED_SESSION_COOKIE: ${VINTED_SESSION_COOKIE:-}
+      TIMEZONE: ${TIMEZONE:-Europe/Paris}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
     volumes:
       # Base SQLite : volume NOMMÉ → persiste aux redéploiements (Coolify & docker classique)
       - bot-data:/app/data
