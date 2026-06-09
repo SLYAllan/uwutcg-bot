@@ -24,6 +24,12 @@ log = logging.getLogger(__name__)
 
 CM_BASE = "https://www.cardmarket.com/fr"
 
+# Slug de jeu dans l'URL Cardmarket. ⚠️ VÉRIFIER EN PROD le slug Riftbound exact.
+CM_GAMES = {
+    "pokemon": "Pokemon",
+    "riftbound": "Riftbound",  # ⚠️ à confirmer (Cardmarket peut utiliser un autre libellé)
+}
+
 # --- ⚠️ Sélecteurs (VÉRIFIER EN PROD) ----------------------------------------
 CM_SELECTORS = {
     "search_row": ".table-body > .row, .article-row",
@@ -57,8 +63,9 @@ class CardmarketScraper:
         self.client = client
 
     # --- recherche / tracking ------------------------------------------------
-    async def search(self, query: str, *, limit: int = 20) -> list[Listing]:
-        url = f"{CM_BASE}/Pokemon/Products/Search?searchString={quote(query)}"
+    async def search(self, query: str, *, limit: int = 20, game: str = "pokemon") -> list[Listing]:
+        slug = CM_GAMES.get(game.lower(), "Pokemon")
+        url = f"{CM_BASE}/{slug}/Products/Search?searchString={quote(query)}"
         html = await self.client.render(url, wait_selector="body", min_interval=6.0)
         tree = HTMLParser(html)
         out: list[Listing] = []
@@ -111,6 +118,15 @@ class CardmarketScraper:
             graded_count=graded,
             raw_count=raw,
         )
+
+    # --- prix le plus bas (EUR) pour une carte -------------------------------
+    async def lowest_price(self, query: str, *, game: str = "pokemon") -> float | None:
+        """Prix mini EUR de la 1re carte correspondante (best effort). None si introuvable."""
+        results = await self.search(query, limit=1, game=game)
+        if not results:
+            return None
+        detail = await self.product_detail(results[0].url)
+        return detail.lowest_price
 
     # --- tendance de prix / ventes (§3.2) ------------------------------------
     async def price_trend(self, query_or_url: str) -> SoldStats:

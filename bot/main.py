@@ -18,6 +18,7 @@ from bot.scrapers.base import ScrapeClient
 from bot.scrapers.cardmarket import CardmarketScraper
 from bot.scrapers.ebay import EbayScraper
 from bot.scrapers.japan import JapanScraper
+from bot.scrapers.riftcodex import RiftcodexScraper
 from bot.scrapers.vinted import VintedScraper
 from bot.services.fx_wise import WiseFx
 from bot.services.knowledge import KnowledgeBase
@@ -32,6 +33,7 @@ COGS = [
     "bot.cogs.grading",
     "bot.cogs.sealed",
     "bot.cogs.knowledge",
+    "bot.cogs.cards",
     "bot.cogs.signals",
     "bot.cogs.daily",
 ]
@@ -60,6 +62,7 @@ class TrackingBot(commands.Bot):
         self.vinted = VintedScraper(self.client)
         self.cardmarket = CardmarketScraper(self.client)
         self.japan = JapanScraper(self.client)
+        self.riftcodex = RiftcodexScraper(self.client)
         self.fx = WiseFx(self.client)
 
     async def setup_hook(self) -> None:

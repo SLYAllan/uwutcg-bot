@@ -21,6 +21,7 @@ suivi de scellé, détecteur de pic, et actions rapides sur les alertes. Conçu 
 | `/arbitrage watch\|list\|remove` | Radar d'arbitrage Japon→France (§3.6) |
 | `/grading-roi` | Estimateur de ROI de grading (§3.7) |
 | `/sealed watch\|list\|remove` | Suivi de produits scellés (§3.8) |
+| `/carte <nom> [prix]` | Recherche une carte Riftbound (API Riftcodex) + prix Cardmarket EUR optionnel |
 | `/riftbound` `/pokemon` `/condition` `/grading` | Consultation de la knowledge base (§2) |
 | `/config ...` | Salons par défaut, affichage config |
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 import discord
 
 from bot.scrapers.base import Listing, SoldStats
+from bot.scrapers.riftcodex import Card
 from bot.services.arbitrage import ArbitrageResult
 from bot.services.grading_roi import GradingRoi
 from bot.services.pricing import PlatformResult
@@ -92,6 +93,58 @@ def arbitrage_embed(res: ArbitrageResult, query: str) -> discord.Embed:
             value=f"net {m.net_profit:+.2f} € · marge {m.net_margin_pct:.0%}",
             inline=True,
         )
+    return e
+
+
+DOMAIN_COLORS = {
+    "Fury": 0xE74C3C, "Furie": 0xE74C3C,
+    "Calm": 0x2ECC71, "Calme": 0x2ECC71,
+    "Mind": 0x3498DB, "Esprit": 0x3498DB,
+    "Body": 0xE67E22, "Corps": 0xE67E22,
+    "Chaos": 0x9B59B6,
+    "Order": 0xF1C40F, "Ordre": 0xF1C40F,
+}
+
+
+def card_embed(card: Card, *, cm_price: float | None = None) -> discord.Embed:
+    """Embed d'une carte Riftbound (données Riftcodex) + prix Cardmarket optionnel."""
+    color = DOMAIN_COLORS.get(card.domains[0], 0x5865F2) if card.domains else 0x5865F2
+    title = card.name
+    if card.collector_number:
+        title += f"  ·  {card.collector_number}"
+    e = discord.Embed(title=title, description=card.text_plain[:1024] or None, color=color)
+    if card.domains:
+        e.add_field(name="Domaine(s)", value=" / ".join(card.domains), inline=True)
+    type_line = " ".join(x for x in [card.supertype, card.type] if x) or "—"
+    e.add_field(name="Type", value=type_line, inline=True)
+    if card.rarity:
+        e.add_field(name="Rareté", value=card.rarity, inline=True)
+    # Stats (les Legends ont attributes=null)
+    if not card.is_legend:
+        stats = []
+        if card.energy is not None:
+            stats.append(f"⚡ Énergie {card.energy}")
+        if card.might is not None:
+            stats.append(f"💪 Puissance {card.might}")
+        if card.power is not None:
+            stats.append(f"🔋 Power {card.power}")
+        if stats:
+            e.add_field(name="Stats", value=" · ".join(stats), inline=False)
+    flags = [
+        x for x, on in [
+            ("alt art", card.alternate_art),
+            ("overnumbered", card.overnumbered),
+            ("signature", card.signature),
+        ] if on
+    ]
+    if flags:
+        e.add_field(name="Collector", value=", ".join(flags), inline=True)
+    if cm_price is not None:
+        e.add_field(name="💶 Cardmarket (mini)", value=f"{cm_price:.2f} €", inline=True)
+    if card.set_label:
+        e.set_footer(text=f"{card.set_label}" + (f" · ill. {card.artist}" if card.artist else ""))
+    if card.image_url:
+        e.set_image(url=card.image_url)
     return e
 
 
