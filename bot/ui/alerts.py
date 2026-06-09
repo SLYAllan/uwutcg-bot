@@ -108,18 +108,12 @@ def build_alert_view(
     """Construit la vue d'alerte : bouton lien (si dispo) + boutons d'action persistants."""
     view = discord.ui.View(timeout=None)
     cents = int(round((price or 0.0) * 100))
-    # Ligne 0 : action principale (ouvrir + calcule ma marge)
+    # Une seule ligne : Ouvrir · Marge · Acheté · Mute
     if link_url:
         view.add_item(
             discord.ui.Button(label="Ouvrir", emoji="🔗", style=discord.ButtonStyle.link,
                               url=link_url, row=0)
         )
-    view.add_item(AlertActionButton("margin", seen_id, cents, row=0))
-    # Ligne 1 : décision sur le deal
-    for action in ("bought", "ignore", "save"):
-        view.add_item(AlertActionButton(action, seen_id, cents, row=1))
-    # Ligne 2 : gestion de la recherche
-    view.add_item(AlertActionButton("mute", seen_id, cents, row=2))
-    if is_ebay:
-        view.add_item(AlertActionButton("ebaywl", seen_id, cents, row=2))
+    for action in ("margin", "bought", "mute"):
+        view.add_item(AlertActionButton(action, seen_id, cents, row=0))
     return view
