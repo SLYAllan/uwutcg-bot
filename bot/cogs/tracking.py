@@ -24,7 +24,7 @@ from discord import app_commands
 from discord.ext import commands, tasks
 
 from bot.cogs.notify import PING_ALLOWED, add_subscriber, mention_prefix
-from bot.scrapers.base import Listing
+from bot.scrapers.base import DomainCooldownError, Listing
 from bot.scrapers.ebay import build_cart_url
 from bot.services.undervalue import looks_like_scam
 from bot.ui import embeds
@@ -185,6 +185,8 @@ class TrackingCog(commands.Cog):
     async def _poll_wrap(self, r) -> None:
         try:
             await self._poll_one(r)
+        except DomainCooldownError as e:
+            log.warning("Recherche #%s reportée (anti-ban) : %s", r["id"], e)
         except Exception:  # noqa: BLE001 - une recherche ne doit pas tuer la boucle
             log.exception("Échec polling recherche #%s", r["id"])
         finally:

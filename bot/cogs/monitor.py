@@ -16,6 +16,7 @@ from discord import app_commands
 from discord.ext import commands, tasks
 
 from bot.cogs.notify import PING_ALLOWED, add_subscriber, mention_prefix
+from bot.scrapers.base import DomainCooldownError
 from bot.services.price_monitor import build_price_chart, trend_pct, window_prices
 
 log = logging.getLogger(__name__)
@@ -146,6 +147,10 @@ class MonitorCog(commands.Cog):
             row = await self.bot.db.fetchone("SELECT * FROM monitors WHERE id = ?", (mid,))
             try:
                 await self._update_one(row, force=True)
+            except DomainCooldownError as e:
+                # Les fiches restantes seront publiées au prochain cycle de poll.
+                log.warning("Publication initiale interrompue (anti-ban) : %s", e)
+                break
             except Exception:  # noqa: BLE001
                 log.exception("Échec publication initiale monitor #%s", mid)
 
@@ -170,6 +175,10 @@ class MonitorCog(commands.Cog):
         for r in rows:
             try:
                 await self._update_one(r)
+            except DomainCooldownError as e:
+                # Ban détecté : inutile d'enchaîner les autres monitors du même domaine.
+                log.warning("Monitors suspendus (anti-ban) : %s", e)
+                break
             except Exception:  # noqa: BLE001
                 log.exception("Échec update monitor #%s", r["id"])
 

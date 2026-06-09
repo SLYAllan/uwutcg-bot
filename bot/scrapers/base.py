@@ -8,6 +8,9 @@ Fournit :
     * retry + backoff exponentiel (tenacity)
     * rotation de user-agents réalistes
     * pool Playwright partagé (un seul navigateur chromium, lazy-init)
+    * disjoncteur anti-ban PAR DOMAINE : un ban détecté (HTTP 429 / page Cloudflare
+      1015) met le domaine en cooldown (15 min, doublé à chaque récidive, max 2 h) ;
+      pendant le cooldown toute requête lève DomainCooldownError SANS toucher le réseau
 - `Listing` / `SoldStats` : modèles de données communs renvoyés par les scrapers.
 
 Aucune plateforme ne doit être interrogée plus souvent que nécessaire : chaque scraper
@@ -54,6 +57,21 @@ USER_AGENTS = [
 
 # Intervalle minimal par défaut entre 2 requêtes vers le même domaine (secondes).
 DEFAULT_MIN_INTERVAL = 3.0
+
+# Disjoncteur anti-ban : durée du 1er cooldown, puis doublée à chaque récidive.
+COOLDOWN_BASE_SECONDS = 15 * 60
+COOLDOWN_MAX_SECONDS = 2 * 3600
+# Empreintes d'une page de ban/challenge Cloudflare (cherchées dans le HTML rendu).
+CF_BAN_MARKERS = ("error 1015", "you are being rate limited", "cf-error-details")
+
+
+class DomainCooldownError(RuntimeError):
+    """Domaine en cooldown anti-ban : la requête est refusée sans toucher le réseau."""
+
+    def __init__(self, domain: str, until_monotonic: float):
+        self.domain = domain
+        self.retry_in = max(0.0, until_monotonic - time.monotonic())
+        super().__init__(f"{domain} en cooldown anti-ban (encore {self.retry_in / 60:.0f} min)")
 
 
 def parse_price(text: str) -> float | None:
@@ -146,6 +164,29 @@ class ScrapeClient:
         self._pw = None
         self._browser = None
         self._pw_lock = asyncio.Lock()
+        # Disjoncteur anti-ban par domaine
+        self._cooldown_until: dict[str, float] = {}
+        self._cooldown_strikes: dict[str, int] = {}
+
+    # --- disjoncteur anti-ban --------------------------------------------------
+    def _check_cooldown(self, domain: str) -> None:
+        until = self._cooldown_until.get(domain, 0.0)
+        if time.monotonic() < until:
+            raise DomainCooldownError(domain, until)
+
+    def _trip_cooldown(self, domain: str) -> None:
+        strikes = self._cooldown_strikes.get(domain, 0) + 1
+        self._cooldown_strikes[domain] = strikes
+        delay = min(COOLDOWN_BASE_SECONDS * (2 ** (strikes - 1)), COOLDOWN_MAX_SECONDS)
+        self._cooldown_until[domain] = time.monotonic() + delay
+        log.warning(
+            "Anti-ban : %s en cooldown %.0f min (récidive n°%d) — requêtes suspendues",
+            domain, delay / 60, strikes,
+        )
+
+    def _note_success(self, domain: str) -> None:
+        # Une requête qui passe = le ban est levé → on réarme le compteur de récidives.
+        self._cooldown_strikes.pop(domain, None)
 
     # --- cycle de vie --------------------------------------------------------
     async def start(self) -> None:
@@ -191,10 +232,18 @@ class ScrapeClient:
         min_interval: float | None = None,
     ) -> httpx.Response:
         await self.start()
-        await self._limiter.acquire(self._domain(url), min_interval or self.min_interval)
+        domain = self._domain(url)
+        self._check_cooldown(domain)
+        await self._limiter.acquire(domain, min_interval or self.min_interval)
         h = {"User-Agent": self._ua(), **(headers or {})}
         resp = await self._http.get(url, params=params, headers=h)  # type: ignore[union-attr]
+        if resp.status_code == 429:
+            # Rate-limit explicite : on coupe le domaine plutôt que d'insister (tenacity
+            # réessaierait → aggrave le ban). DomainCooldownError n'est PAS retryable.
+            self._trip_cooldown(domain)
+            raise DomainCooldownError(domain, self._cooldown_until[domain])
         resp.raise_for_status()
+        self._note_success(domain)
         return resp
 
     async def get_json(self, url: str, **kwargs) -> Any:
@@ -231,7 +280,9 @@ class ScrapeClient:
         Utilisé pour Cardmarket (Cloudflare) et tout contenu JS lourd (SPA Mercari).
         `scroll` : nombre de défilements pour déclencher le lazy-loading (SPA).
         """
-        await self._limiter.acquire(self._domain(url), min_interval or self.min_interval)
+        domain = self._domain(url)
+        self._check_cooldown(domain)
+        await self._limiter.acquire(domain, min_interval or self.min_interval)
         browser = await self._ensure_browser()
         context = await browser.new_context(
             user_agent=self._ua(),
@@ -246,7 +297,10 @@ class ScrapeClient:
             page = await context.new_page()
             if stealth_async:
                 await stealth_async(page)
-            await page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
+            resp = await page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
+            if resp is not None and resp.status == 429:
+                self._trip_cooldown(domain)
+                raise DomainCooldownError(domain, self._cooldown_until[domain])
             if wait_selector:
                 try:
                     await page.wait_for_selector(wait_selector, timeout=timeout_ms)
@@ -257,6 +311,13 @@ class ScrapeClient:
                 await asyncio.sleep(random.uniform(0.8, 1.4))
             # petit délai aléatoire pour imiter un humain
             await asyncio.sleep(random.uniform(0.5, 1.5))
-            return await page.content()
+            html = await page.content()
+            # Certaines pages de ban Cloudflare arrivent en 200 : on inspecte le HTML.
+            head = html[:5000].lower()
+            if any(marker in head for marker in CF_BAN_MARKERS):
+                self._trip_cooldown(domain)
+                raise DomainCooldownError(domain, self._cooldown_until[domain])
+            self._note_success(domain)
+            return html
         finally:
             await context.close()
