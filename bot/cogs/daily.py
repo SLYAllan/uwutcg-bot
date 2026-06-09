@@ -54,18 +54,29 @@ class DailyCog(commands.Cog):
         embed = discord.Embed(title="☀️ Digest quotidien — UwUTCG", color=0xF1C40F)
         embed.add_field(name="💱 JPY → EUR (Wise)", value=fx_line, inline=False)
 
-        # 2) Synthèse monitoring (variations notables)
+        # 2) Synthèse monitoring : UNIQUEMENT les cartes dont le prix a changé depuis hier.
         monitors = await self.bot.db.fetchall("SELECT * FROM monitors")
-        notable: list[str] = []
+        changed: list[tuple[float, str]] = []
         for m in monitors:
-            series = [dict(s) for s in await self.bot.db.price_series("monitor", m["id"])]
-            t1 = trend_pct(window_prices(series, 1))
-            if t1 is not None and abs(t1) >= 0.05:
-                arrow = "📈" if t1 > 0 else "📉"
-                notable.append(f"{arrow} **{m['card_name']}** {t1:+.1%} (24 h)")
+            prices = window_prices(
+                [dict(s) for s in await self.bot.db.price_series("monitor", m["id"])], 1
+            )
+            if len(prices) < 2:
+                continue
+            old, new = prices[0], prices[-1]
+            if round(old, 2) == round(new, 2):
+                continue  # pas de changement → on n'affiche pas (anti-spam)
+            delta = new - old
+            pct = (delta / old) if old else 0.0
+            arrow = "🔻" if delta < 0 else "🔺"
+            changed.append(
+                (abs(pct), f"{arrow} **{m['card_name']}** {new:.2f} € ({delta:+.2f} € / {pct:+.1%})")
+            )
+        changed.sort(key=lambda x: x[0], reverse=True)  # plus grosses variations d'abord
         embed.add_field(
-            name="📊 Monitoring",
-            value="\n".join(notable) if notable else "Aucune variation notable (±5 %).",
+            name="📊 Cartes suivies (variations depuis hier)",
+            value="\n".join(line for _, line in changed) if changed
+            else "Aucun changement de prix depuis hier.",
             inline=False,
         )
         await channel.send(embed=embed)
