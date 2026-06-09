@@ -86,6 +86,50 @@ class TrackingCog(commands.Cog):
             ephemeral=True,
         )
 
+    @group.command(name="bulk", description="Ajoute plusieurs recherches d'un coup (séparées par ;)")
+    @app_commands.choices(platform=PLATFORM_CHOICES)
+    @app_commands.describe(
+        queries="Termes séparés par ; — prix max individuel possible : `terme @ 25`",
+        channel="Salon de notification (défaut : salon configuré)",
+        max_price="Prix max par défaut en € (pour les termes sans @prix)",
+    )
+    async def bulk(
+        self,
+        interaction: discord.Interaction,
+        platform: app_commands.Choice[str],
+        queries: str,
+        channel: discord.TextChannel | None = None,
+        max_price: float | None = None,
+    ):
+        await interaction.response.defer(ephemeral=True)
+        items = [s.strip() for s in queries.split(";") if s.strip()]
+        if not items:
+            await interaction.followup.send("Aucun terme — sépare-les par `;`.", ephemeral=True)
+            return
+        lines: list[str] = []
+        added = 0
+        for item in items:
+            q, _, price_part = item.partition("@")
+            q = q.strip()
+            price = max_price
+            p = price_part.replace("€", "").replace(",", ".").strip()
+            if p:
+                try:
+                    price = float(p)
+                except ValueError:
+                    lines.append(f"⚠️ `{item}` : prix invalide, ignoré")
+                    continue
+            search_id = await self.bot.db.execute(
+                "INSERT INTO tracked_searches(platform, query, channel_id, max_price) "
+                "VALUES(?, ?, ?, ?)",
+                (platform.value, q, channel.id if channel else None, price),
+            )
+            lines.append(f"✅ #{search_id} `{q}`" + (f" ≤{price:.0f}€" if price else ""))
+            added += 1
+        await add_subscriber(self.bot.db, interaction.user.id)
+        out = f"**{platform.name}** — {added}/{len(items)} suivis ajoutés :\n" + "\n".join(lines)
+        await interaction.followup.send(out[:1990], ephemeral=True)
+
     @group.command(name="list", description="Liste les recherches suivies")
     async def list_(self, interaction: discord.Interaction):
         rows = await self.bot.db.fetchall(

@@ -31,6 +31,8 @@ def build_info_embeds() -> list[discord.Embed]:
             "Reçois une alerte par **nouvelle annonce** sur tes recherches.\n"
             "`/track add platform:vinted query:\"dracaufeu 151\" max_price:50`\n"
             "`/track add platform:ebay query:\"pikachu psa 10\"`\n"
+            "• **En masse** : `/track bulk queries:terme1; terme2 @ 25; terme3` "
+            "(`;` entre les termes, `@ prix` optionnel par terme).\n"
             "• **Cardmarket** = deal sniper sur UNE carte : `query` = **nom exact ou URL** de la "
             "carte, et mets un `max_price` pour ne cibler que les bons plans.\n"
             "`/track list` · `/track remove id:<n>`"
