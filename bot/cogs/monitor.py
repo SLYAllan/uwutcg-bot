@@ -7,6 +7,7 @@ graphique).
 """
 from __future__ import annotations
 
+import asyncio
 import io
 import logging
 
@@ -21,6 +22,11 @@ log = logging.getLogger(__name__)
 
 MONITOR_POLL_MINUTES = 180  # 3 h : Cardmarket via Playwright, on espace les hits
 
+GAME_CHOICES = [
+    app_commands.Choice(name="Pokémon", value="pokemon"),
+    app_commands.Choice(name="Riftbound", value="riftbound"),
+]
+
 
 class MonitorCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
@@ -33,34 +39,39 @@ class MonitorCog(commands.Cog):
     group = app_commands.Group(name="monitor", description="Suivi détaillé d'une carte Cardmarket")
 
     @group.command(name="create", description="Suit une carte dans un salon existant")
+    @app_commands.choices(game=GAME_CHOICES)
     @app_commands.describe(
         card="Nom de la carte ou URL Cardmarket",
         salon="Salon où publier le suivi (défaut : salon courant)",
+        game="Jeu Cardmarket pour la recherche par nom (défaut : Pokémon)",
     )
     async def create(
         self,
         interaction: discord.Interaction,
         card: str,
         salon: discord.TextChannel | None = None,
+        game: app_commands.Choice[str] | None = None,
     ):
         await interaction.response.defer(thinking=True, ephemeral=True)
         guild = interaction.guild
         if guild is None:
             await interaction.followup.send("À utiliser dans un serveur.", ephemeral=True)
             return
+        channel = salon or interaction.channel
+        if not isinstance(channel, discord.TextChannel):
+            await interaction.followup.send("Salon invalide : utilise un salon textuel.", ephemeral=True)
+            return
         # Résout l'URL produit si on a reçu un nom
         url = card if card.startswith("http") else None
         if url is None:
-            results = await self.bot.cardmarket.search(card, limit=1)
+            results = await self.bot.cardmarket.search(
+                card, limit=1, game=game.value if game else "pokemon"
+            )
             if not results:
                 await interaction.followup.send("Carte introuvable sur Cardmarket.", ephemeral=True)
                 return
             url = results[0].url
 
-        channel = salon or interaction.channel
-        if not isinstance(channel, discord.TextChannel):
-            await interaction.followup.send("Salon invalide : utilise un salon textuel.", ephemeral=True)
-            return
         monitor_id = await self.bot.db.execute(
             "INSERT INTO monitors(card_name, url, channel_id) VALUES(?, ?, ?)",
             (card, url, channel.id),
@@ -73,6 +84,70 @@ class MonitorCog(commands.Cog):
             await self.bot.db.fetchone("SELECT * FROM monitors WHERE id = ?", (monitor_id,)),
             force=True,  # 1re fiche publiée à la création même si pas de variation
         )
+
+    @group.command(name="bulk", description="Crée plusieurs monitors d'un coup (cartes séparées par ;)")
+    @app_commands.choices(game=GAME_CHOICES)
+    @app_commands.describe(
+        cards="Noms ou URLs Cardmarket séparés par ; (URLs recommandées : pas de recherche)",
+        salon="Salon où publier les suivis (défaut : salon courant)",
+        game="Jeu Cardmarket pour la recherche par nom (défaut : Pokémon)",
+    )
+    async def bulk(
+        self,
+        interaction: discord.Interaction,
+        cards: str,
+        salon: discord.TextChannel | None = None,
+        game: app_commands.Choice[str] | None = None,
+    ):
+        await interaction.response.defer(thinking=True, ephemeral=True)
+        if interaction.guild is None:
+            await interaction.followup.send("À utiliser dans un serveur.", ephemeral=True)
+            return
+        channel = salon or interaction.channel
+        if not isinstance(channel, discord.TextChannel):
+            await interaction.followup.send("Salon invalide : utilise un salon textuel.", ephemeral=True)
+            return
+        items = [s.strip() for s in cards.split(";") if s.strip()]
+        if not items:
+            await interaction.followup.send("Aucune carte — sépare-les par `;`.", ephemeral=True)
+            return
+        created: list[int] = []
+        skipped: list[str] = []
+        for item in items:
+            if item.startswith("http"):
+                url = item
+                name = url.rstrip("/").rsplit("/", 1)[-1].replace("-", " ")
+            else:
+                results = await self.bot.cardmarket.search(
+                    item, limit=1, game=game.value if game else "pokemon"
+                )
+                if not results:
+                    skipped.append(item)
+                    continue
+                url, name = results[0].url, item
+            monitor_id = await self.bot.db.execute(
+                "INSERT INTO monitors(card_name, url, channel_id) VALUES(?, ?, ?)",
+                (name, url, channel.id),
+            )
+            created.append(monitor_id)
+        await add_subscriber(self.bot.db, interaction.user.id)
+        msg = (
+            f"📈 {len(created)}/{len(items)} monitors créés dans {channel.mention} — "
+            "les premières fiches arrivent au fil de l'eau."
+        )
+        if skipped:
+            msg += "\n⚠️ Introuvables : " + ", ".join(f"`{s}`" for s in skipped)
+        await interaction.followup.send(msg[:1990], ephemeral=True)
+        # Publication initiale en arrière-plan : 1 fetch Cardmarket par carte (rate-limité).
+        asyncio.create_task(self._seed_new(created))
+
+    async def _seed_new(self, ids: list[int]) -> None:
+        for mid in ids:
+            row = await self.bot.db.fetchone("SELECT * FROM monitors WHERE id = ?", (mid,))
+            try:
+                await self._update_one(row, force=True)
+            except Exception:  # noqa: BLE001
+                log.exception("Échec publication initiale monitor #%s", mid)
 
     @group.command(name="list", description="Liste les monitors actifs")
     async def list_(self, interaction: discord.Interaction):

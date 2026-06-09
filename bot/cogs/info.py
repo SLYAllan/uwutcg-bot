@@ -59,7 +59,9 @@ def build_info_embeds() -> list[discord.Embed]:
         value=(
             "Publie le suivi dans le salon courant (ou `salon:` au choix) : prix mini, **vrai total "
             "d'offres**, tendance & moyennes 7j/30j Cardmarket, graphique.\n"
-            "`/monitor create card:<nom ou URL Cardmarket> [salon:#salon]` · `/monitor list` · `/monitor remove`"
+            "`/monitor create card:<nom ou URL Cardmarket> [salon:#salon] [game:Riftbound]`\n"
+            "• **En masse** : `/monitor bulk cards:<noms ou URLs séparés par ;>`\n"
+            "`/monitor list` · `/monitor remove`"
         ),
         inline=False,
     )
