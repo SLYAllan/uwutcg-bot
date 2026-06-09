@@ -25,6 +25,7 @@ from bot.services.knowledge import KnowledgeBase
 
 COGS = [
     "bot.cogs.config",
+    "bot.cogs.info",
     "bot.cogs.tracking",
     "bot.cogs.sold",
     "bot.cogs.monitor",
