@@ -180,6 +180,58 @@ class CardmarketScraper:
         m = CM_STATS[key].search(text)
         return parse_price(m.group(1)) if m else None
 
+    # --- offres d'une carte (deal sniper /track cardmarket) ------------------
+    async def resolve_product_url(self, url_or_name: str, *, game: str = "pokemon") -> str | None:
+        """Renvoie l'URL produit : telle quelle si c'est une URL, sinon via recherche."""
+        if url_or_name.startswith("http"):
+            return url_or_name
+        results = await self.search(url_or_name, limit=1, game=game)
+        return results[0].url if results else None
+
+    async def card_offers(
+        self, url_or_name: str, *, max_price: float | None = None, game: str = "pokemon"
+    ) -> list[Listing]:
+        """Offres individuelles d'une carte (1 Listing/offre), pour le tracking deal sniper.
+
+        Clé de dédup = l'ID d'offre Cardmarket (id du <div articleRow…>), stable → une
+        nouvelle offre = une nouvelle alerte. Triées par prix croissant ; filtre max_price.
+        """
+        url = await self.resolve_product_url(url_or_name, game=game)
+        if url is None:
+            return []
+        html = await self.client.render(url, wait_selector="body", min_interval=6.0)
+        tree = HTMLParser(html)
+        name_n = tree.css_first("h1")
+        card_name = name_n.text(strip=True).split("  ")[0] if name_n else url
+        out: list[Listing] = []
+        for row in tree.css(CM_SELECTORS["offer_row"]):
+            row_id = row.attributes.get("id") or ""
+            if not row_id:
+                continue
+            price_n = row.css_first(CM_SELECTORS["offer_price"])
+            price = parse_price(price_n.text(strip=True)) if price_n else None
+            if price is None:
+                continue
+            if max_price is not None and price > max_price:
+                continue
+            cond_n = row.css_first(CM_SELECTORS["offer_condition"])
+            cond = cond_n.text(strip=True) if cond_n else None
+            seller_n = row.css_first("a[href*='/Users/'], .seller-name a, span.seller-name")
+            seller = seller_n.text(strip=True) if seller_n else None
+            out.append(
+                Listing(
+                    key=row_id,  # ID d'offre Cardmarket = dédup stable
+                    platform="cardmarket",
+                    title=f"{card_name} — {cond or '?'}",
+                    price=price,
+                    currency="EUR",
+                    url=url,
+                    condition=cond,
+                    seller=seller,
+                )
+            )
+        return out
+
     # --- prix le plus bas (EUR) pour une carte -------------------------------
     async def lowest_price(self, query: str, *, game: str = "pokemon") -> float | None:
         """Prix « à partir de » EUR de la 1re carte correspondante. None si introuvable.

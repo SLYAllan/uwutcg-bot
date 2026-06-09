@@ -61,9 +61,9 @@ class TrackingCog(commands.Cog):
     @group.command(name="add", description="Ajoute une recherche à suivre")
     @app_commands.choices(platform=PLATFORM_CHOICES)
     @app_commands.describe(
-        query="Terme de recherche",
+        query="Vinted/eBay : termes de recherche · Cardmarket : nom EXACT de la carte ou URL de sa page",
         channel="Salon de notification (défaut : salon configuré)",
-        max_price="Prix maximum en €",
+        max_price="Prix maximum en € (recommandé sur Cardmarket pour ne cibler que les deals)",
     )
     async def add(
         self,
@@ -166,7 +166,9 @@ class TrackingCog(commands.Cog):
         if platform == "vinted":
             return await self.bot.vinted.search_active(query, max_price=max_price)
         if platform == "cardmarket":
-            return await self.bot.cardmarket.search(query)
+            # CM = catalogue : on suit les OFFRES d'une carte précise (nom exact ou URL),
+            # dédup par ID d'offre, filtrées par prix max → deal sniper.
+            return await self.bot.cardmarket.card_offers(query, max_price=max_price)
         return []
 
     async def _notify(self, channel, r, listing: Listing, seen_id: int) -> None:
