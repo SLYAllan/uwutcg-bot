@@ -55,7 +55,16 @@ class TrackingBot(commands.Bot):
         super().__init__(command_prefix="!", intents=intents, help_command=None)
 
         self._synced = False
-        self.tz = zoneinfo.ZoneInfo(self.settings.timezone)
+        try:
+            self.tz = zoneinfo.ZoneInfo(self.settings.timezone)
+        except (zoneinfo.ZoneInfoNotFoundError, ModuleNotFoundError):
+            from datetime import timezone
+
+            log.warning(
+                "Fuseau '%s' introuvable (paquet tzdata manquant ?) → repli sur UTC.",
+                self.settings.timezone,
+            )
+            self.tz = timezone.utc
         self.db = Database(self.settings.db_path)
         self.client = ScrapeClient()
         self.pricing = PricingConfig.load(self.settings.pricing_config)

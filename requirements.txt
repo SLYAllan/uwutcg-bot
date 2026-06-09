@@ -23,6 +23,7 @@ python-dotenv>=1.0
 rapidfuzz>=3.9
 matplotlib>=3.9
 tenacity>=8.4
+tzdata>=2024.1   # base de fuseaux IANA (Europe/Paris) — requise dans le conteneur
 
 # --- Tests ---
 pytest>=8.2
