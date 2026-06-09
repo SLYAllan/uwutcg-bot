@@ -34,3 +34,4 @@ ms-playwright/
 Thumbs.db
 .idea/
 .vscode/
+.firecrawl/
