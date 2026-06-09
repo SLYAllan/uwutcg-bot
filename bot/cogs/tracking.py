@@ -23,6 +23,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands, tasks
 
+from bot.cogs.notify import PING_ALLOWED, add_subscriber, mention_prefix
 from bot.scrapers.base import Listing
 from bot.scrapers.ebay import build_cart_url
 from bot.services.undervalue import looks_like_scam
@@ -78,6 +79,7 @@ class TrackingCog(commands.Cog):
             "VALUES(?, ?, ?, ?)",
             (platform.value, query, channel.id if channel else None, max_price),
         )
+        await add_subscriber(self.bot.db, interaction.user.id)  # le créateur est pingué
         await interaction.response.send_message(
             f"✅ Suivi **#{search_id}** — {platform.name} : `{query}`"
             + (f" (≤ {max_price:.2f} €)" if max_price else ""),
@@ -189,7 +191,8 @@ class TrackingCog(commands.Cog):
             price=listing.price,
             is_ebay=(listing.platform == "ebay"),
         )
-        await channel.send(embed=embed, view=view)
+        mentions = await mention_prefix(self.bot.db)
+        await channel.send(content=mentions, embed=embed, view=view, allowed_mentions=PING_ALLOWED)
 
     def _link_for(self, listing: Listing) -> str | None:
         if listing.platform == "ebay" and listing.item_id:

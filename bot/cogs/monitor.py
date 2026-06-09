@@ -13,6 +13,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands, tasks
 
+from bot.cogs.notify import PING_ALLOWED, add_subscriber, mention_prefix
 from bot.services.price_monitor import build_price_chart, trend_pct, window_prices
 
 log = logging.getLogger(__name__)
@@ -53,6 +54,7 @@ class MonitorCog(commands.Cog):
             "INSERT INTO monitors(card_name, url, channel_id) VALUES(?, ?, ?)",
             (card, url, channel.id),
         )
+        await add_subscriber(self.bot.db, interaction.user.id)  # le créateur est pingué
         await interaction.followup.send(
             f"📈 Monitor #{monitor_id} créé : {channel.mention}", ephemeral=True
         )
@@ -172,7 +174,8 @@ class MonitorCog(commands.Cog):
             png = build_price_chart(rows_dicts, detail.name)
             file = discord.File(io.BytesIO(png), filename="price.png")
             embed.set_image(url="attachment://price.png")
-        await channel.send(embed=embed, file=file)
+        mentions = await mention_prefix(self.bot.db)
+        await channel.send(content=mentions, embed=embed, file=file, allowed_mentions=PING_ALLOWED)
 
 
 async def setup(bot: commands.Bot):

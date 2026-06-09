@@ -99,11 +99,12 @@ def build_info_embeds() -> list[discord.Embed]:
         inline=False,
     )
     e2.add_field(
-        name="⑩ Réglages avancés",
+        name="⑩ Notifications (ping) & réglages",
         value=(
-            "`/config poll-intervals` → voir les fréquences\n"
-            "`/config set-poll-interval platform:vinted seconds:90` → ajuster (borné par un "
-            "minimum anti-ban)"
+            "`/notify on` → être pingué sur les alertes (tracking, monitoring, digest)\n"
+            "`/notify add user:@X` → pinguer quelqu'un d'autre · `/notify list` · `/notify off`\n"
+            "_(le créateur d'un /track ou /monitor est ajouté automatiquement)_\n"
+            "`/config poll-intervals` · `/config set-poll-interval platform:vinted seconds:90`"
         ),
         inline=False,
     )

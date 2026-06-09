@@ -13,6 +13,7 @@ import discord
 from apscheduler.triggers.cron import CronTrigger
 from discord.ext import commands
 
+from bot.cogs.notify import PING_ALLOWED, mention_prefix
 from bot.services.price_monitor import trend_pct, window_prices
 
 log = logging.getLogger(__name__)
@@ -79,7 +80,8 @@ class DailyCog(commands.Cog):
             else "Aucun changement de prix depuis hier.",
             inline=False,
         )
-        await channel.send(embed=embed)
+        mentions = await mention_prefix(self.bot.db)
+        await channel.send(content=mentions, embed=embed, allowed_mentions=PING_ALLOWED)
 
     # --- hebdomadaire --------------------------------------------------------
     async def weekly_digest(self):
@@ -112,7 +114,8 @@ class DailyCog(commands.Cog):
             if t is not None:
                 lines.append(f"**{m['card_name']}** {t:+.1%} (7 j)")
         embed.add_field(name="Cotes suivies", value="\n".join(lines) or "—", inline=False)
-        await channel.send(embed=embed)
+        mentions = await mention_prefix(self.bot.db)
+        await channel.send(content=mentions, embed=embed, allowed_mentions=PING_ALLOWED)
 
 
 async def setup(bot: commands.Bot):
