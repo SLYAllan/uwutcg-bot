@@ -1,0 +1,55 @@
+# ============================================================================
+#  Taux & frais pour le calculateur de rentabilité (services/pricing.py, §3.5)
+#  Tous éditables à chaud via /calc rates (persistés en table `config`) ou ici.
+#  Vérifiés pour 2026 — assiette micro-entreprise = CA BRUT encaissé.
+#  TVA import NON récupérable (franchise de TVA) -> incluse dans le coût de revient.
+# ============================================================================
+
+# Charges sociales/fiscales micro-entreprise (vente de marchandises BIC), en % du CA brut.
+charges:
+  urssaf_pct: 0.123      # URSSAF vente de marchandises BIC : 12,3 %
+  income_tax_pct: 0.01   # Versement libératoire de l'IR (vente) : 1 %
+  cfp_pct: 0.001         # Contribution à la formation professionnelle : 0,1 %
+
+# Paramètres par plateforme de revente.
+#   commission_pct : commission plateforme (% du prix de vente)
+#   payment_pct    : frais de paiement (% du prix de vente)
+#   fixed_fee_eur  : frais fixe par vente (€)
+platforms:
+  cardmarket:
+    label: "Cardmarket"
+    commission_pct: 0.05
+    payment_pct: 0.0
+    fixed_fee_eur: 0.0
+  ebay:
+    label: "eBay"
+    commission_pct: 0.11    # ~11 % (variable selon catégorie/statut vendeur — à régler)
+    payment_pct: 0.0        # inclus dans la commission eBay "frais de vente" moderne
+    fixed_fee_eur: 0.35     # frais fixe par commande
+  tiktok:
+    label: "TikTok Shop"
+    commission_pct: 0.07    # ≈ 5–9 % selon période — à régler
+    payment_pct: 0.0
+    fixed_fee_eur: 0.0
+
+# Sourcing Japon : commission proxy + import (arbitrage §3.6).
+sourcing:
+  proxy_commission_pct: 0.05   # Buyee/FromJapan : commission d'achat indicative
+  proxy_fixed_fee_eur: 3.0     # frais fixe par lot/commande proxy (indicatif)
+  intl_shipping_eur: 12.0      # port international moyen par défaut
+  import_vat_pct: 0.20         # TVA import (NON récupérable) appliquée à (valeur + port)
+  customs_threshold_eur: 0.0   # seuil sous lequel pas de TVA import (0 = toujours)
+
+# Seuils d'alerte par défaut.
+thresholds:
+  arbitrage_min_margin_pct: 0.30   # alerte arbitrage si marge nette >= 30 %
+  dealsniper_below_market_pct: 0.20 # alerte si annonce >= 20 % sous le prix marché
+  spike_price_pct_7d: 0.15         # pic prix : +15 % sur médiane 7 j
+  spike_volume_factor: 2.0         # pic volume : x2 du volume moyen
+
+# Coûts de grading (ROI §3.7), en € — tarif + port A/R + assurance indicatifs.
+grading:
+  psa:  { fee_eur: 25.0, shipping_eur: 20.0, insurance_eur: 5.0 }
+  cgc:  { fee_eur: 18.0, shipping_eur: 18.0, insurance_eur: 5.0 }
+  bgs:  { fee_eur: 30.0, shipping_eur: 22.0, insurance_eur: 5.0 }
+  pca:  { fee_eur: 15.0, shipping_eur: 10.0, insurance_eur: 4.0 }

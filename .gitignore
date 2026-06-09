@@ -1,0 +1,36 @@
+# Secrets — NEVER commit
+.env
+*.env
+!.env.example
+
+# Data / runtime
+data/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+logs/
+*.log
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Playwright
+ms-playwright/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

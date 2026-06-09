@@ -1,0 +1,21 @@
+services:
+  bot:
+    build: .
+    image: uwutcg-tracking-bot:latest
+    container_name: uwutcg-bot
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      # DB SQLite persistante
+      - ./data:/app/data
+      # Knowledge base éditable sans rebuild
+      - ./knowledge:/app/knowledge:ro
+      # Taux/frais éditables sans rebuild
+      - ./pricing.yaml:/app/pricing.yaml:ro
+    # Logs structurés visibles via `docker compose logs -f bot`
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
