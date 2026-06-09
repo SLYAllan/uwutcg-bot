@@ -15,7 +15,7 @@ suivi de scellé, détecteur de pic, et actions rapides sur les alertes. Conçu 
 |---|---|
 | `/track add\|list\|remove` | Suivi d'annonces Vinted/Cardmarket/eBay (§3.1) |
 | `/sold platform query` | Ventes réussies : min/médian/max (§3.2) |
-| `/monitor create\|list\|remove` | Salon dédié + suivi prix Cardmarket + graphique (§3.4) |
+| `/monitor create\|list\|remove` | Suivi prix Cardmarket + graphique dans un salon existant (§3.4) |
 | `/calc compute` · `/calc bind\|unbind` · `/calc rates` | Seuil de rentabilité + salon auto (§3.5) |
 | `/convert` | Conversion JPY↔EUR (taux Wise en cache) |
 | `/arbitrage watch\|list\|remove` | Radar d'arbitrage Japon→France (§3.6) |
@@ -47,7 +47,7 @@ Copier `.env.example` → `.env` et renseigner :
 
 **Permissions Discord du bot** : activer l'intent *Message Content* (pour le salon calculateur),
 et inviter le bot avec les scopes `bot applications.commands` + droits *Send Messages*,
-*Embed Links*, *Attach Files*, *Manage Channels* (pour `/monitor create`).
+*Embed Links*, *Attach Files*.
 
 ### Sécurité des secrets
 - `.env` est dans `.gitignore` — **ne jamais le committer**.

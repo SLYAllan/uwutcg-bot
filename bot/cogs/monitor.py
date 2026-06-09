@@ -1,8 +1,9 @@
 """Monitoring de prix détaillé d'une carte Cardmarket (§3.4).
 
-/monitor create → crée un salon dédié et y publie un suivi détaillé mis à jour
-périodiquement (prix mini, nb offres, répartition état/langue, gradées vs raw,
-historique construit par le bot, tendances 7j/30j, graphique).
+/monitor create → publie dans un salon existant (salon courant par défaut) un
+suivi détaillé mis à jour périodiquement (prix mini, nb offres, répartition
+état/langue, gradées vs raw, historique construit par le bot, tendances 7j/30j,
+graphique).
 """
 from __future__ import annotations
 
@@ -31,9 +32,17 @@ class MonitorCog(commands.Cog):
 
     group = app_commands.Group(name="monitor", description="Suivi détaillé d'une carte Cardmarket")
 
-    @group.command(name="create", description="Crée un salon de suivi pour une carte")
-    @app_commands.describe(card="Nom de la carte ou URL Cardmarket")
-    async def create(self, interaction: discord.Interaction, card: str):
+    @group.command(name="create", description="Suit une carte dans un salon existant")
+    @app_commands.describe(
+        card="Nom de la carte ou URL Cardmarket",
+        salon="Salon où publier le suivi (défaut : salon courant)",
+    )
+    async def create(
+        self,
+        interaction: discord.Interaction,
+        card: str,
+        salon: discord.TextChannel | None = None,
+    ):
         await interaction.response.defer(thinking=True, ephemeral=True)
         guild = interaction.guild
         if guild is None:
@@ -48,15 +57,17 @@ class MonitorCog(commands.Cog):
                 return
             url = results[0].url
 
-        chan_name = ("mon-" + card.lower())[:90].replace(" ", "-")
-        channel = await guild.create_text_channel(name=chan_name)
+        channel = salon or interaction.channel
+        if not isinstance(channel, discord.TextChannel):
+            await interaction.followup.send("Salon invalide : utilise un salon textuel.", ephemeral=True)
+            return
         monitor_id = await self.bot.db.execute(
             "INSERT INTO monitors(card_name, url, channel_id) VALUES(?, ?, ?)",
             (card, url, channel.id),
         )
         await add_subscriber(self.bot.db, interaction.user.id)  # le créateur est pingué
         await interaction.followup.send(
-            f"📈 Monitor #{monitor_id} créé : {channel.mention}", ephemeral=True
+            f"📈 Monitor #{monitor_id} créé dans {channel.mention}", ephemeral=True
         )
         await self._update_one(
             await self.bot.db.fetchone("SELECT * FROM monitors WHERE id = ?", (monitor_id,)),
@@ -72,7 +83,7 @@ class MonitorCog(commands.Cog):
         lines = [f"**#{r['id']}** {r['card_name']} → <#{r['channel_id']}>" for r in rows]
         await interaction.response.send_message("\n".join(lines), ephemeral=True)
 
-    @group.command(name="remove", description="Supprime un monitor (le salon reste)")
+    @group.command(name="remove", description="Supprime un monitor")
     async def remove(self, interaction: discord.Interaction, id: int):
         await self.bot.db.execute("DELETE FROM monitors WHERE id = ?", (id,))
         await interaction.response.send_message(f"🗑️ Monitor #{id} supprimé.", ephemeral=True)

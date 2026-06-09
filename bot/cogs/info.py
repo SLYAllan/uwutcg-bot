@@ -55,9 +55,9 @@ def build_info_embeds() -> list[discord.Embed]:
     e1.add_field(
         name="⑤ Suivi de prix d'une carte — `/monitor`",
         value=(
-            "Crée un salon dédié + suivi (prix mini, **vrai total d'offres**, tendance & moyennes "
-            "7j/30j Cardmarket, graphique).\n"
-            "`/monitor create card:<nom ou URL Cardmarket>` · `/monitor list` · `/monitor remove`"
+            "Publie le suivi dans le salon courant (ou `salon:` au choix) : prix mini, **vrai total "
+            "d'offres**, tendance & moyennes 7j/30j Cardmarket, graphique.\n"
+            "`/monitor create card:<nom ou URL Cardmarket> [salon:#salon]` · `/monitor list` · `/monitor remove`"
         ),
         inline=False,
     )
