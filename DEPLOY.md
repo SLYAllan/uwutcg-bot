@@ -56,11 +56,29 @@ git pull            # (option A) ou re-scp (option B)
 docker compose up -d --build
 ```
 
-## 5. Option Coolify (comme riftboundfrance.fr)
-- Nouveau service → **Docker Compose** (source = ton repo Git privé).
-- Renseigner les variables d'env (le contenu du `.env`) dans l'onglet *Environment*.
-- Monter des volumes persistants pour `/app/data` (et `/app/knowledge`, `/app/pricing.yaml`).
-- Déploiement **manuel** (clic Deploy) — pas d'auto-deploy tant que la GitHub App n'est pas configurée.
+## 5. Déploiement Coolify (recommandé — comme riftboundfrance.fr)
+
+Coolify déploie depuis un **dépôt Git**. Étapes :
+
+1. **Pousser le code sur un repo privé GitHub** (Coolify lira le `docker-compose.yml`) :
+   ```bash
+   git remote add origin git@github.com:SLYAllan/uwutcg-bot.git
+   git push -u origin master
+   ```
+2. Dans Coolify : **+ New Resource → Private Repository (with GitHub App)** → sélectionner
+   `SLYAllan/uwutcg-bot`, branche `master`.
+3. **Build Pack : Docker Compose**, fichier `docker-compose.yml`.
+4. **Environment Variables** : recopier le contenu de `.env` (DISCORD_TOKEN, DISCORD_APP_ID,
+   EBAY_APP_ID, EBAY_DEV_ID, EBAY_CERT_ID, EBAY_MARKETPLACE_ID, TIMEZONE, etc.).
+   Coolify les fournit au compose (le `env_file` est `required: false`, donc aucun fichier
+   à créer ; pydantic-settings lit les variables d'environnement injectées).
+5. **Persistance** : le volume nommé `bot-data` (→ `/app/data`, la base SQLite) est conservé
+   automatiquement entre les redéploiements. `knowledge/` et `pricing.yaml` viennent du repo.
+6. **Deploy** (manuel). Pas de domaine ni de port à exposer : c'est un worker.
+7. Suivre les logs dans Coolify → tu dois voir « Connecté… » + « Slash commands synchronisées ».
+
+> Mise à jour : `git push` puis re-cliquer **Deploy** dans Coolify (pas d'auto-deploy tant
+> que le webhook/GitHub App n'est pas branché).
 
 ## Exploitation
 - Logs : `docker compose logs -f bot` (rotation 10 Mo × 3 déjà configurée).

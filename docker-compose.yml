@@ -4,18 +4,22 @@ services:
     image: uwutcg-tracking-bot:latest
     container_name: uwutcg-bot
     restart: unless-stopped
+    # En local : lit .env. Sur Coolify : les variables sont injectées via l'UI,
+    # donc le fichier n'est pas requis (required: false évite l'erreur si absent).
     env_file:
-      - .env
+      - path: .env
+        required: false
     volumes:
-      # DB SQLite persistante
-      - ./data:/app/data
-      # Knowledge base éditable sans rebuild
+      # Base SQLite : volume NOMMÉ → persiste aux redéploiements (Coolify & docker classique)
+      - bot-data:/app/data
+      # Knowledge base & taux : éditables sans rebuild (présents dans le repo)
       - ./knowledge:/app/knowledge:ro
-      # Taux/frais éditables sans rebuild
       - ./pricing.yaml:/app/pricing.yaml:ro
-    # Logs structurés visibles via `docker compose logs -f bot`
     logging:
       driver: json-file
       options:
         max-size: "10m"
         max-file: "3"
+
+volumes:
+  bot-data:
