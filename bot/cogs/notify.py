@@ -65,14 +65,36 @@ class NotifyCog(commands.Cog):
         msg = "🔕 Tu ne seras plus pingué." if removed else "Tu n'étais pas abonné."
         await interaction.response.send_message(msg, ephemeral=True)
 
-    @group.command(name="add", description="Ajouter quelqu'un aux personnes pinguées")
+    @staticmethod
+    def _can_manage_others(interaction: discord.Interaction) -> bool:
+        """Gérer les abonnements d'AUTRES personnes = réservé aux gérants du serveur."""
+        perms = getattr(interaction.user, "guild_permissions", None)
+        if perms is None:  # hors serveur
+            return False
+        return perms.manage_guild or perms.administrator
+
+    @group.command(name="add", description="Ajouter quelqu'un aux personnes pinguées (gérants)")
     async def add(self, interaction: discord.Interaction, user: discord.User):
+        if not self._can_manage_others(interaction):
+            await interaction.response.send_message(
+                "⛔ Réservé aux gérants du serveur (permission *Gérer le serveur*). "
+                "Chacun peut s'ajouter soi-même avec `/notify on`.",
+                ephemeral=True,
+            )
+            return
         added = await add_subscriber(self.bot.db, user.id)
         msg = f"🔔 {user.mention} sera pingué sur les alertes." if added else f"{user.mention} était déjà abonné."
         await interaction.response.send_message(msg, ephemeral=True, allowed_mentions=discord.AllowedMentions.none())
 
-    @group.command(name="remove", description="Retirer quelqu'un des personnes pinguées")
+    @group.command(name="remove", description="Retirer quelqu'un des personnes pinguées (gérants)")
     async def remove(self, interaction: discord.Interaction, user: discord.User):
+        # Chacun peut se retirer soi-même ; retirer AUTRUI = gérants uniquement.
+        if user.id != interaction.user.id and not self._can_manage_others(interaction):
+            await interaction.response.send_message(
+                "⛔ Réservé aux gérants du serveur. Tu peux te retirer toi-même avec `/notify off`.",
+                ephemeral=True,
+            )
+            return
         removed = await remove_subscriber(self.bot.db, user.id)
         msg = f"🔕 {user.mention} ne sera plus pingué." if removed else f"{user.mention} n'était pas abonné."
         await interaction.response.send_message(msg, ephemeral=True, allowed_mentions=discord.AllowedMentions.none())
