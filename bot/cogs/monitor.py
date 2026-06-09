@@ -94,7 +94,8 @@ class MonitorCog(commands.Cog):
         detail = await self.bot.cardmarket.product_detail(row["url"])
         if detail.lowest_price is not None:
             await self.bot.db.record_price(
-                "monitor", row["id"], detail.lowest_price, offers_count=detail.offers_count
+                "monitor", row["id"], detail.lowest_price,
+                offers_count=detail.total_available or detail.offers_count,
             )
             await self.bot.db.execute(
                 "UPDATE monitors SET last_lowest = ? WHERE id = ?",
@@ -112,30 +113,41 @@ class MonitorCog(commands.Cog):
         embed = discord.Embed(title=f"📈 {detail.name}", url=detail.url, color=0xFFC107)
         if detail.lowest_price is not None:
             embed.add_field(name="Prix mini", value=f"{detail.lowest_price:.2f} €", inline=True)
-        embed.add_field(name="Offres", value=str(detail.offers_count), inline=True)
-        embed.add_field(
-            name="Gradées / Raw", value=f"{detail.graded_count} / {detail.raw_count}", inline=True
+        # Vrai total dispo (en-tête Cardmarket), pas seulement les offres affichées.
+        offres = str(detail.total_available) if detail.total_available is not None else str(detail.offers_count)
+        embed.add_field(name="Offres dispo", value=offres, inline=True)
+        # Tendance & moyennes officielles Cardmarket (fiables, immédiates).
+        cm_trend = " · ".join(
+            s for s in [
+                f"tendance {detail.trend_price:.2f} €" if detail.trend_price else "",
+                f"7j {detail.avg_7d:.2f} €" if detail.avg_7d else "",
+                f"30j {detail.avg_30d:.2f} €" if detail.avg_30d else "",
+            ] if s
         )
+        if cm_trend:
+            embed.add_field(name="Prix moyens (CM)", value=cm_trend, inline=False)
+        # Répartition sur les offres AFFICHÉES (page 1) — étiquetée comme telle.
+        shown = detail.offers_count
         if detail.by_condition:
             embed.add_field(
-                name="Par état",
+                name=f"Par état (sur {shown} affichées)",
                 value=", ".join(f"{k}: {v}" for k, v in detail.by_condition.items())[:1024],
                 inline=False,
             )
-        if detail.by_language:
-            embed.add_field(
-                name="Par langue",
-                value=", ".join(f"{k}: {v}" for k, v in detail.by_language.items())[:1024],
-                inline=False,
-            )
-        trend_str = " · ".join(
+        embed.add_field(
+            name="Gradées / Raw (affichées)",
+            value=f"{detail.graded_count} / {detail.raw_count}",
+            inline=True,
+        )
+        # Tendance construite par le bot sur son propre historique (complément).
+        bot_trend = " · ".join(
             s for s in [
                 f"7j {t7:+.1%}" if t7 is not None else "",
                 f"30j {t30:+.1%}" if t30 is not None else "",
             ] if s
         )
-        if trend_str:
-            embed.add_field(name="Tendance", value=trend_str, inline=False)
+        if bot_trend:
+            embed.add_field(name="Évolution suivie (bot)", value=bot_trend, inline=True)
 
         file = None
         if len(rows_dicts) >= 2:

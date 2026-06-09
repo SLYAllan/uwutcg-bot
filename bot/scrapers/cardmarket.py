@@ -49,14 +49,33 @@ CM_SELECTORS = {
 }
 
 
+# Stats de l'en-tête produit (libellés FR stables, validés en live 2026-06-09).
+CM_STATS = {
+    "total_available": re.compile(r"disponibles?\s+(\d[\d\s.]*)", re.IGNORECASE),
+    "trend": re.compile(r"Tendance des prix\s+([\d.,\s]+?)\s*€", re.IGNORECASE),
+    "avg_30d": re.compile(r"Prix moyen 30\s*jours\s+([\d.,\s]+?)\s*€", re.IGNORECASE),
+    "avg_7d": re.compile(r"Prix moyen 7\s*jours\s+([\d.,\s]+?)\s*€", re.IGNORECASE),
+    "from": re.compile(r"\bDe\s+([\d.,\s]+?)\s*€", re.IGNORECASE),
+}
+
+
 @dataclass
 class ProductDetail:
-    """Synthèse détaillée d'un produit Cardmarket (§3.4)."""
+    """Synthèse détaillée d'un produit Cardmarket (§3.4).
+
+    `total_available` vient de l'en-tête (vrai total, ex. 402). `offers_count`, la
+    répartition état/langue et gradées/raw ne portent que sur les offres AFFICHÉES
+    (page 1, ~50) — Cardmarket ne charge pas tout d'un coup.
+    """
 
     name: str
     url: str
     lowest_price: float | None
-    offers_count: int
+    offers_count: int               # offres affichées (page 1)
+    total_available: int | None = None   # vrai total (en-tête)
+    trend_price: float | None = None
+    avg_7d: float | None = None
+    avg_30d: float | None = None
     by_condition: dict[str, int] = field(default_factory=dict)
     by_language: dict[str, int] = field(default_factory=dict)
     graded_count: int = 0
@@ -103,12 +122,24 @@ class CardmarketScraper:
         tree = HTMLParser(html)
         name_n = tree.css_first("h1")
         name = name_n.text(strip=True) if name_n else product_url
+        page_text = (tree.css_first("body").text(separator=" ", strip=True)
+                     if tree.css_first("body") else "")
 
+        # 1) Stats de l'en-tête (VRAI total + tendance + moyennes) — non tronquées.
+        total_available = None
+        m = CM_STATS["total_available"].search(page_text)
+        if m:
+            total_available = int(re.sub(r"\D", "", m.group(1)) or 0)
+        trend = self._stat("trend", page_text)
+        avg30 = self._stat("avg_30d", page_text)
+        avg7 = self._stat("avg_7d", page_text)
+        from_price = self._stat("from", page_text)
+
+        # 2) Offres affichées (page 1, ~50) pour le prix mini + répartition partielle.
         prices: list[float] = []
         by_cond: dict[str, int] = {}
         by_lang: dict[str, int] = {}
         graded = raw = 0
-
         for row in tree.css(CM_SELECTORS["offer_row"]):
             price_n = row.css_first(CM_SELECTORS["offer_price"])
             price = parse_price(price_n.text(strip=True)) if price_n else None
@@ -125,16 +156,29 @@ class CardmarketScraper:
             else:
                 raw += 1
 
+        # Prix mini : les offres étant triées par prix croissant, le mini de la page 1
+        # EST le mini global ; à défaut on retombe sur le "De X €" de l'en-tête.
+        lowest = min(prices) if prices else from_price
+
         return ProductDetail(
             name=name,
             url=product_url,
-            lowest_price=min(prices) if prices else None,
+            lowest_price=lowest,
             offers_count=len(prices),
+            total_available=total_available,
+            trend_price=trend,
+            avg_7d=avg7,
+            avg_30d=avg30,
             by_condition=by_cond,
             by_language=by_lang,
             graded_count=graded,
             raw_count=raw,
         )
+
+    @staticmethod
+    def _stat(key: str, text: str) -> float | None:
+        m = CM_STATS[key].search(text)
+        return parse_price(m.group(1)) if m else None
 
     # --- prix le plus bas (EUR) pour une carte -------------------------------
     async def lowest_price(self, query: str, *, game: str = "pokemon") -> float | None:
