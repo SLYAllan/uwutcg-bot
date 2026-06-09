@@ -44,12 +44,16 @@ log = logging.getLogger(__name__)
 class TrackingBot(commands.Bot):
     """Bot conteneur : porte la DB, les scrapers, les services et le scheduler."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, enable_message_content: bool = True) -> None:
         self.settings = get_settings()
         intents = discord.Intents.default()
-        intents.message_content = True  # nécessaire pour le salon calculateur (§3.5)
+        # message_content (privilégié) : nécessaire pour la réponse auto du salon calculateur
+        # (§3.5). Si l'intent n'est pas activé sur le portail, on démarre sans (mode dégradé).
+        intents.message_content = enable_message_content
+        self.message_content_enabled = enable_message_content
         super().__init__(command_prefix="!", intents=intents, help_command=None)
 
+        self._synced = False
         self.tz = zoneinfo.ZoneInfo(self.settings.timezone)
         self.db = Database(self.settings.db_path)
         self.client = ScrapeClient()
@@ -86,20 +90,31 @@ class TrackingBot(commands.Bot):
             except Exception:  # noqa: BLE001
                 log.exception("Échec chargement cog %s", ext)
 
-        # Sync des slash commands (guild en dev = instantané, sinon global)
+        # Si une guild est fixée : sync instantané ici. Sinon, on synchronise sur
+        # tou(te)s les serveur(s) détecté(s) dans on_ready (instantané aussi).
         if self.settings.discord_guild_id:
             guild = discord.Object(id=self.settings.discord_guild_id)
             self.tree.copy_global_to(guild=guild)
             await self.tree.sync(guild=guild)
             log.info("Slash commands synchronisées sur la guild %s", self.settings.discord_guild_id)
-        else:
-            await self.tree.sync()
-            log.info("Slash commands synchronisées globalement (propagation ~1 h)")
+            self._synced = True
 
         self.scheduler.start()
 
     async def on_ready(self) -> None:
         log.info("Connecté en tant que %s (id=%s)", self.user, self.user.id if self.user else "?")
+        # Auto-sync sur les serveurs où le bot est présent (sync instantané sans config).
+        if not self._synced and self.guilds:
+            for g in self.guilds:
+                try:
+                    self.tree.copy_global_to(guild=g)
+                    await self.tree.sync(guild=g)
+                    log.info("Slash commands synchronisées sur %s (%s)", g.name, g.id)
+                except Exception:  # noqa: BLE001
+                    log.exception("Échec sync sur la guild %s", g.id)
+            self._synced = True
+        elif not self.guilds:
+            log.warning("Le bot n'est dans aucun serveur — invite-le avec scope bot+applications.commands.")
 
     async def close(self) -> None:
         log.info("Arrêt du bot…")
@@ -117,15 +132,29 @@ def _setup_logging(level: str) -> None:
     )
 
 
+async def _run(token: str, enable_message_content: bool) -> None:
+    bot = TrackingBot(enable_message_content=enable_message_content)
+    async with bot:
+        await bot.start(token)
+
+
 async def _amain() -> None:
-    bot = TrackingBot()
-    _setup_logging(bot.settings.log_level)
-    if not bot.settings.discord_token:
+    settings = get_settings()
+    _setup_logging(settings.log_level)
+    if not settings.discord_token:
         raise SystemExit(
             "DISCORD_TOKEN manquant dans .env (renseigne le BOT TOKEN, pas le client secret)."
         )
-    async with bot:
-        await bot.start(bot.settings.discord_token)
+    try:
+        await _run(settings.discord_token, enable_message_content=True)
+    except discord.errors.PrivilegedIntentsRequired:
+        log.warning(
+            "⚠️ MESSAGE CONTENT INTENT non activé sur le portail Discord → démarrage en MODE "
+            "DÉGRADÉ : tout fonctionne SAUF la réponse automatique dans les salons calculateur "
+            "(/calc compute et les autres commandes marchent). Pour l'activer : portail dev → "
+            "ton appli → onglet Bot → 'MESSAGE CONTENT INTENT', puis redémarre."
+        )
+        await _run(settings.discord_token, enable_message_content=False)
 
 
 def main() -> None:

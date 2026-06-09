@@ -29,7 +29,7 @@ def listing_embed(listing: Listing, *, deal_note: str | None = None) -> discord.
     if listing.seller:
         e.add_field(name="Vendeur", value=str(listing.seller), inline=True)
     if listing.image_url:
-        e.set_thumbnail(url=listing.image_url)
+        e.set_image(url=listing.image_url)  # image pleine largeur (plus lisible qu'une vignette)
     if deal_note:
         e.add_field(name="🔥 Deal", value=deal_note, inline=False)
     return e

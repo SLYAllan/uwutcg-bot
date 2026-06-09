@@ -17,14 +17,14 @@ import discord
 
 log = logging.getLogger(__name__)
 
-# action -> (label, style, emoji)
+# action -> (label, style, emoji). Labels courts pour un placement propre.
 ACTIONS = {
-    "margin": ("Calcule ma marge", discord.ButtonStyle.primary, "💶"),
+    "margin": ("Marge", discord.ButtonStyle.primary, "💶"),
     "bought": ("Acheté", discord.ButtonStyle.success, "✅"),
     "ignore": ("Ignorer", discord.ButtonStyle.secondary, "🚫"),
-    "mute": ("Mute la recherche", discord.ButtonStyle.secondary, "🔕"),
-    "save": ("Sauvegarder", discord.ButtonStyle.secondary, "📌"),
-    "ebaywl": ("Watchlist eBay", discord.ButtonStyle.secondary, "➕"),
+    "mute": ("Mute", discord.ButtonStyle.secondary, "🔕"),
+    "save": ("Sauver", discord.ButtonStyle.secondary, "📌"),
+    "ebaywl": ("Watchlist", discord.ButtonStyle.secondary, "➕"),
 }
 
 
@@ -34,7 +34,7 @@ class AlertActionButton(
 ):
     """Bouton persistant. custom_id : alert:<action>:<seen_id>:<price_cents>."""
 
-    def __init__(self, action: str, seen_id: int, price_cents: int):
+    def __init__(self, action: str, seen_id: int, price_cents: int, row: int | None = None):
         self.action = action
         self.seen_id = seen_id
         self.price_cents = price_cents
@@ -45,6 +45,7 @@ class AlertActionButton(
                 style=style,
                 emoji=emoji,
                 custom_id=f"alert:{action}:{seen_id}:{price_cents}",
+                row=row,
             )
         )
 
@@ -106,13 +107,19 @@ def build_alert_view(
 ) -> discord.ui.View:
     """Construit la vue d'alerte : bouton lien (si dispo) + boutons d'action persistants."""
     view = discord.ui.View(timeout=None)
+    cents = int(round((price or 0.0) * 100))
+    # Ligne 0 : action principale (ouvrir + calcule ma marge)
     if link_url:
         view.add_item(
-            discord.ui.Button(label="Ouvrir 🔗", style=discord.ButtonStyle.link, url=link_url)
+            discord.ui.Button(label="Ouvrir", emoji="🔗", style=discord.ButtonStyle.link,
+                              url=link_url, row=0)
         )
-    cents = int(round((price or 0.0) * 100))
-    for action in ("margin", "bought", "ignore", "mute", "save"):
-        view.add_item(AlertActionButton(action, seen_id, cents))
+    view.add_item(AlertActionButton("margin", seen_id, cents, row=0))
+    # Ligne 1 : décision sur le deal
+    for action in ("bought", "ignore", "save"):
+        view.add_item(AlertActionButton(action, seen_id, cents, row=1))
+    # Ligne 2 : gestion de la recherche
+    view.add_item(AlertActionButton("mute", seen_id, cents, row=2))
     if is_ebay:
-        view.add_item(AlertActionButton("ebaywl", seen_id, cents))
+        view.add_item(AlertActionButton("ebaywl", seen_id, cents, row=2))
     return view
