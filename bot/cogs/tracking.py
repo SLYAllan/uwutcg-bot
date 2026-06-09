@@ -1,12 +1,23 @@
 """Tracking d'annonces multi-plateforme (§3.1).
 
-/track add | list | remove. Polling périodique (défaut 7 min), déduplication via
-seen_listings, un embed + boutons d'action par nouvelle annonce. Intègre le deal sniper
-(§5) et l'heuristique anti-arnaque (§5) via services.undervalue.
+/track add | list | remove. Polling PAR PLATEFORME au rythme le plus rapide sans risque
+de ban (eBay 60 s via API, Vinted 90 s, Cardmarket 300 s via Playwright/Cloudflare),
+déduplication via seen_listings, un embed + boutons par nouvelle annonce. Intègre le deal
+sniper (§5) et l'anti-arnaque (§5).
+
+Détails clés :
+- Boucle « tick » courte : ne lance QUE les recherches dues, en tâches parallèles
+  (une recherche lente ne bloque pas les autres). Le rate-limiter par domaine espace déjà
+  les requêtes d'une même plateforme.
+- Seeding : au 1er passage d'une recherche, les annonces déjà en ligne sont marquées « vues »
+  SANS notifier → on n'alerte que sur les vraies nouvelles annonces ensuite.
+- Intervalles réglables à chaud via /config set-poll-interval, bornés par un minimum de sécurité.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
+import time
 
 import discord
 from discord import app_commands
@@ -25,12 +36,20 @@ PLATFORM_CHOICES = [
     app_commands.Choice(name="Cardmarket", value="cardmarket"),
     app_commands.Choice(name="eBay", value="ebay"),
 ]
-POLL_MINUTES = 7
+
+# Intervalles de polling par plateforme (secondes) — le plus rapide sans risque de ban.
+DEFAULT_INTERVALS = {"ebay": 60, "vinted": 90, "cardmarket": 300}
+# Plancher de sécurité : impossible de descendre sous ces valeurs (anti-ban / quota API).
+MIN_INTERVALS = {"ebay": 30, "vinted": 60, "cardmarket": 180}
+FALLBACK_INTERVAL = 120
+TICK_SECONDS = 15  # granularité de la boucle d'ordonnancement
 
 
 class TrackingCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
+        self._last: dict[int, float] = {}     # search_id -> dernier poll (monotonic)
+        self._inflight: set[int] = set()       # recherches en cours (évite le chevauchement)
         self.poll_loop.start()
 
     def cog_unload(self):
@@ -87,31 +106,58 @@ class TrackingCog(commands.Cog):
         await interaction.response.send_message(f"🗑️ Suivi #{id} supprimé.", ephemeral=True)
 
     # --- polling -------------------------------------------------------------
-    @tasks.loop(minutes=POLL_MINUTES)
+    async def _intervals(self) -> dict[str, int]:
+        """Intervalles effectifs (défauts + overrides config), bornés au minimum de sécurité."""
+        overrides = await self.bot.db.config_get("poll_intervals", default={}) or {}
+        merged = {**DEFAULT_INTERVALS, **overrides}
+        return {p: max(int(v), MIN_INTERVALS.get(p, 30)) for p, v in merged.items()}
+
+    @tasks.loop(seconds=TICK_SECONDS)
     async def poll_loop(self):
+        """Ordonnanceur : lance uniquement les recherches dues, en parallèle."""
+        intervals = await self._intervals()
         rows = await self.bot.db.fetchall(
             "SELECT id, platform, query, channel_id, max_price FROM tracked_searches "
             "WHERE muted = 0"
         )
+        now = time.monotonic()
         for r in rows:
-            try:
-                await self._poll_one(r)
-            except Exception:  # noqa: BLE001 - une recherche ne doit pas tuer la boucle
-                log.exception("Échec polling recherche #%s", r["id"])
+            sid = r["id"]
+            if sid in self._inflight:
+                continue
+            interval = intervals.get(r["platform"], FALLBACK_INTERVAL)
+            if now - self._last.get(sid, 0.0) < interval:
+                continue
+            self._last[sid] = now
+            self._inflight.add(sid)
+            asyncio.create_task(self._poll_wrap(r))
 
     @poll_loop.before_loop
     async def _before(self):
         await self.bot.wait_until_ready()
 
+    async def _poll_wrap(self, r) -> None:
+        try:
+            await self._poll_one(r)
+        except Exception:  # noqa: BLE001 - une recherche ne doit pas tuer la boucle
+            log.exception("Échec polling recherche #%s", r["id"])
+        finally:
+            self._inflight.discard(r["id"])
+
     async def _poll_one(self, r) -> None:
         listings = await self._search(r["platform"], r["query"], r["max_price"])
-        channel = await self._resolve_channel(r["channel_id"])
-        if channel is None:
-            return
+        # Seeding : au 1er passage, on marque tout comme vu SANS notifier (pas de flood).
+        already = await self.bot.db.fetchone(
+            "SELECT COUNT(*) AS c FROM seen_listings WHERE search_id = ?", (r["id"],)
+        )
+        seeding = (already["c"] == 0) if already else False
+        channel = None if seeding else await self._resolve_channel(r["channel_id"])
         for listing in listings:
             if await self.bot.db.is_seen(r["id"], listing.key):
                 continue
             seen_id = await self.bot.db.mark_seen(r["id"], listing.key)
+            if seeding or channel is None:
+                continue
             await self._notify(channel, r, listing, seen_id)
 
     async def _search(self, platform: str, query: str, max_price) -> list[Listing]:
