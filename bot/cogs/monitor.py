@@ -57,7 +57,8 @@ class MonitorCog(commands.Cog):
             f"📈 Monitor #{monitor_id} créé : {channel.mention}", ephemeral=True
         )
         await self._update_one(
-            await self.bot.db.fetchone("SELECT * FROM monitors WHERE id = ?", (monitor_id,))
+            await self.bot.db.fetchone("SELECT * FROM monitors WHERE id = ?", (monitor_id,)),
+            force=True,  # 1re fiche publiée à la création même si pas de variation
         )
 
     @group.command(name="list", description="Liste les monitors actifs")
@@ -88,10 +89,12 @@ class MonitorCog(commands.Cog):
     async def _before(self):
         await self.bot.wait_until_ready()
 
-    async def _update_one(self, row) -> None:
+    async def _update_one(self, row, force: bool = False) -> None:
         if row is None:
             return
         detail = await self.bot.cardmarket.product_detail(row["url"])
+        prev = row["last_lowest"]
+        # On enregistre toujours l'historique (pour le graphique/tendance)…
         if detail.lowest_price is not None:
             await self.bot.db.record_price(
                 "monitor", row["id"], detail.lowest_price,
@@ -101,6 +104,13 @@ class MonitorCog(commands.Cog):
                 "UPDATE monitors SET last_lowest = ? WHERE id = ?",
                 (detail.lowest_price, row["id"]),
             )
+        # …mais on ne NOTIFIE que si le prix mini a CHANGÉ (ou 1er passage) → anti-spam.
+        has_price = detail.lowest_price is not None
+        changed = force or (
+            has_price and (prev is None or round(float(prev), 2) != round(detail.lowest_price, 2))
+        )
+        if not changed:
+            return
         channel = self.bot.get_channel(int(row["channel_id"]))
         if channel is None:
             return
@@ -110,9 +120,17 @@ class MonitorCog(commands.Cog):
         t7 = trend_pct(window_prices(rows_dicts, 7))
         t30 = trend_pct(window_prices(rows_dicts, 30))
 
-        embed = discord.Embed(title=f"📈 {detail.name}", url=detail.url, color=0xFFC107)
+        # Couleur selon le sens de variation (vert = baisse = bonne affaire).
+        color = 0xFFC107
+        if has_price and prev is not None:
+            color = 0x2ECC71 if detail.lowest_price < float(prev) else 0xE74C3C
+        embed = discord.Embed(title=f"📈 {detail.name}", url=detail.url, color=color)
         if detail.lowest_price is not None:
-            embed.add_field(name="Prix mini", value=f"{detail.lowest_price:.2f} €", inline=True)
+            val = f"{detail.lowest_price:.2f} €"
+            if prev is not None and round(float(prev), 2) != round(detail.lowest_price, 2):
+                arrow = "🔻" if detail.lowest_price < float(prev) else "🔺"
+                val += f"  {arrow} (avant {float(prev):.2f} €)"
+            embed.add_field(name="Prix mini", value=val, inline=True)
         # Vrai total dispo (en-tête Cardmarket), pas seulement les offres affichées.
         offres = str(detail.total_available) if detail.total_available is not None else str(detail.offers_count)
         embed.add_field(name="Offres dispo", value=offres, inline=True)
