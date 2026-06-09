@@ -190,6 +190,12 @@ class MonitorCog(commands.Cog):
         if row is None:
             return
         detail = await self.bot.cardmarket.product_detail(row["url"])
+        # Page sans la moindre donnée produit (challenge Cloudflare, HTML inattendu…) :
+        # on ne publie PAS de fiche vide, le prochain cycle réessaiera.
+        if detail.lowest_price is None and not (detail.total_available or detail.offers_count):
+            log.warning("Monitor #%s : page produit sans données, fiche non publiée (%s)",
+                        row["id"], row["url"])
+            return
         prev = row["last_lowest"]
         # On enregistre toujours l'historique (pour le graphique/tendance)…
         if detail.lowest_price is not None:

@@ -63,6 +63,10 @@ COOLDOWN_BASE_SECONDS = 15 * 60
 COOLDOWN_MAX_SECONDS = 2 * 3600
 # Empreintes d'une page de ban/challenge Cloudflare (cherchées dans le HTML rendu).
 CF_BAN_MARKERS = ("error 1015", "you are being rate limited", "cf-error-details")
+# Page de challenge JS (« Just a moment… ») : pas un ban, mais la page utile n'est
+# pas encore là — on attend qu'elle se résolve avant de rendre le HTML.
+CF_CHALLENGE_MARKERS = ("just a moment", "challenges.cloudflare.com", "cf-chl", "checking your browser")
+CHALLENGE_RESOLVE_TIMEOUT = 20.0  # secondes
 
 
 class DomainCooldownError(RuntimeError):
@@ -265,6 +269,23 @@ class ScrapeClient:
             )
             return self._browser
 
+    async def _wait_challenge(self, page, domain: str) -> None:
+        """Attend la résolution d'un challenge JS Cloudflare (« Just a moment… »).
+
+        Avec stealth, le challenge managé se résout souvent seul en quelques secondes.
+        S'il persiste au-delà du délai, on considère le domaine bloqué → cooldown
+        (continuer à le marteler ne ferait qu'aggraver les choses).
+        """
+        deadline = time.monotonic() + CHALLENGE_RESOLVE_TIMEOUT
+        while True:
+            head = (await page.content())[:5000].lower()
+            if not any(m in head for m in CF_CHALLENGE_MARKERS):
+                return
+            if time.monotonic() >= deadline:
+                self._trip_cooldown(domain)
+                raise DomainCooldownError(domain, self._cooldown_until[domain])
+            await asyncio.sleep(2.0)
+
     async def render(
         self,
         url: str,
@@ -301,6 +322,7 @@ class ScrapeClient:
             if resp is not None and resp.status == 429:
                 self._trip_cooldown(domain)
                 raise DomainCooldownError(domain, self._cooldown_until[domain])
+            await self._wait_challenge(page, domain)
             if wait_selector:
                 try:
                     await page.wait_for_selector(wait_selector, timeout=timeout_ms)
