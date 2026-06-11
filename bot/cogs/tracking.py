@@ -1,7 +1,8 @@
 """Tracking d'annonces multi-plateforme (§3.1).
 
 /track add | list | remove. Polling PAR PLATEFORME au rythme le plus rapide sans risque
-de ban (eBay 60 s via API, Vinted 90 s, Cardmarket 300 s via Playwright/Cloudflare),
+de ban (eBay 60 s via API, Vinted 90 s, Cardmarket 300 s via Playwright/Cloudflare,
+Mercari JP 300 s via Playwright — prix convertis JPY→EUR, bouton d'achat FromJapan),
 déduplication via seen_listings, un embed + boutons par nouvelle annonce. Intègre le deal
 sniper (§5) et l'anti-arnaque (§5).
 
@@ -36,12 +37,13 @@ PLATFORM_CHOICES = [
     app_commands.Choice(name="Vinted", value="vinted"),
     app_commands.Choice(name="Cardmarket", value="cardmarket"),
     app_commands.Choice(name="eBay", value="ebay"),
+    app_commands.Choice(name="Mercari JP (achat via FromJapan)", value="mercari"),
 ]
 
 # Intervalles de polling par plateforme (secondes) — le plus rapide sans risque de ban.
-DEFAULT_INTERVALS = {"ebay": 60, "vinted": 90, "cardmarket": 300}
+DEFAULT_INTERVALS = {"ebay": 60, "vinted": 90, "cardmarket": 300, "mercari": 300}
 # Plancher de sécurité : impossible de descendre sous ces valeurs (anti-ban / quota API).
-MIN_INTERVALS = {"ebay": 30, "vinted": 60, "cardmarket": 180}
+MIN_INTERVALS = {"ebay": 30, "vinted": 60, "cardmarket": 180, "mercari": 180}
 FALLBACK_INTERVAL = 120
 TICK_SECONDS = 15  # granularité de la boucle d'ordonnancement
 
@@ -217,7 +219,28 @@ class TrackingCog(commands.Cog):
             # CM = catalogue : on suit les OFFRES d'une carte précise (nom exact ou URL),
             # dédup par ID d'offre, filtrées par prix max → deal sniper.
             return await self.bot.cardmarket.card_offers(query, max_price=max_price)
+        if platform == "mercari":
+            listings = await self.bot.japan.search(query)
+            return await self._mercari_to_eur(listings, max_price)
         return []
+
+    async def _mercari_to_eur(self, listings: list[Listing], max_price) -> list[Listing]:
+        """Convertit les prix Mercari JPY→EUR (taux Wise) : max_price, deal sniper et
+        anti-arnaque raisonnent en € comme les autres plateformes. Le JPY d'origine
+        reste dans extra["price_jpy"]."""
+        rate = None
+        out: list[Listing] = []
+        for listing in listings:
+            if listing.price is not None and listing.currency == "JPY":
+                if rate is None:
+                    rate = (await self.bot.fx.get_rate()).rate
+                listing.extra["price_jpy"] = listing.price
+                listing.price = round(listing.price * rate, 2)
+                listing.currency = "EUR"
+            if max_price is not None and listing.price is not None and listing.price > max_price:
+                continue
+            out.append(listing)
+        return out
 
     async def _notify(self, channel, r, listing: Listing, seen_id: int) -> None:
         deal_note = None
@@ -247,6 +270,9 @@ class TrackingCog(commands.Cog):
             return listing.url
         if listing.platform == "vinted" and listing.item_id:
             return self.bot.vinted.item_url(listing.item_id)
+        if listing.platform == "mercari":
+            # Un tap → page de commande FromJapan (proxy d'achat d'Allan).
+            return listing.extra.get("fromjapan_url") or listing.url or None
         return listing.url or None
 
     async def _resolve_channel(self, channel_id):

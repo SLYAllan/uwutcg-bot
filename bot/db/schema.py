@@ -7,7 +7,7 @@ PRAGMA foreign_keys=ON;
 -- Recherches de tracking multi-plateforme (§3.1)
 CREATE TABLE IF NOT EXISTS tracked_searches (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
-    platform     TEXT NOT NULL,          -- vinted | cardmarket | ebay
+    platform     TEXT NOT NULL,          -- vinted | cardmarket | ebay | mercari
     query        TEXT NOT NULL,
     channel_id   INTEGER,                -- salon de notif (NULL = défaut)
     max_price    REAL,                   -- filtre prix max (€)

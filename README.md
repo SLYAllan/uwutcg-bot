@@ -1,7 +1,7 @@
 # UwUTCG — Bot Discord « Agent de Tracking »
 
 Bot Discord de veille marché pour la revente de cartes (Pokémon, Riftbound) et figurines :
-tracking d'annonces multi-plateforme (Vinted / Cardmarket / eBay), ventes réussies, monitoring
+tracking d'annonces multi-plateforme (Vinted / Cardmarket / eBay / Mercari JP via FromJapan), ventes réussies, monitoring
 de prix, calculateur de rentabilité micro-entreprise, arbitrage Japon→France, ROI de grading,
 suivi de scellé, détecteur de pic, et actions rapides sur les alertes. Conçu pour tourner en
 **conteneur Docker 24/7** (VPS Hetzner).
@@ -13,7 +13,7 @@ suivi de scellé, détecteur de pic, et actions rapides sur les alertes. Conçu 
 
 | Commande | Rôle |
 |---|---|
-| `/track add\|list\|remove` | Suivi d'annonces Vinted/Cardmarket/eBay (§3.1) |
+| `/track add\|bulk\|list\|remove` | Suivi d'annonces Vinted/Cardmarket/eBay/Mercari JP (§3.1) — Mercari : prix convertis JPY→EUR, bouton d'achat FromJapan |
 | `/sold platform query` | Ventes réussies : min/médian/max (§3.2) |
 | `/monitor create\|list\|remove` | Suivi prix Cardmarket + graphique dans un salon existant (§3.4) |
 | `/calc compute` · `/calc bind\|unbind` · `/calc rates` | Seuil de rentabilité + salon auto (§3.5) |
@@ -24,9 +24,10 @@ suivi de scellé, détecteur de pic, et actions rapides sur les alertes. Conçu 
 | `/carte <nom> [prix]` | Recherche une carte Riftbound (API Riftcodex) + prix Cardmarket EUR optionnel |
 | `/riftbound` `/pokemon` `/condition` `/grading` | Consultation de la knowledge base (§2) |
 | `/config ...` | Salons par défaut, affichage config |
+| `/digest now\|weekly` | Publie le digest quotidien/hebdo immédiatement (test) |
 
 Le **salon quotidien** (taux Wise + synthèse monitoring) et le **digest hebdo** sont automatiques
-(APScheduler, 09:00 Europe/Paris). Les embeds d'alerte portent des **boutons** : lien direct (panier
+(APScheduler, 09:00 Europe/Paris ; salon défini via `/config set-digest-channel`). Les embeds d'alerte portent des **boutons** : lien direct (panier
 eBay / article Vinted / page Cardmarket), « Calcule ma marge », Acheté/Ignorer, Mute, Sauvegarder.
 
 ## Prérequis

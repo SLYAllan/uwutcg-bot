@@ -11,6 +11,7 @@ import logging
 
 import discord
 from apscheduler.triggers.cron import CronTrigger
+from discord import app_commands
 from discord.ext import commands
 
 from bot.cogs.notify import PING_ALLOWED, mention_prefix
@@ -18,31 +19,73 @@ from bot.services.price_monitor import trend_pct, window_prices
 
 log = logging.getLogger(__name__)
 
+# Si le bot est occupé/en cours de redéploiement à 09:00 pile, le job reste valable
+# 1 h au lieu d'être sauté en silence (misfire_grace_time par défaut d'APScheduler : 1 s).
+JOB_KWARGS = {"misfire_grace_time": 3600, "coalesce": True, "replace_existing": True}
+
 
 class DailyCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         bot.scheduler.add_job(
-            self.daily_digest, CronTrigger(hour=9, minute=0), id="daily_digest", replace_existing=True
+            self.daily_digest, CronTrigger(hour=9, minute=0), id="daily_digest", **JOB_KWARGS
         )
         bot.scheduler.add_job(
             self.weekly_digest,
             CronTrigger(day_of_week="mon", hour=9, minute=0),
             id="weekly_digest",
-            replace_existing=True,
+            **JOB_KWARGS,
         )
+
+    group = app_commands.Group(name="digest", description="Digest quotidien / hebdomadaire")
+
+    @group.command(name="now", description="Publie le digest quotidien immédiatement (test)")
+    async def now(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+        channel = await self._digest_channel()
+        if channel is None:
+            await interaction.followup.send(
+                "❌ Salon digest introuvable — configure-le avec `/config set-digest-channel`.",
+                ephemeral=True,
+            )
+            return
+        await self.daily_digest()
+        await interaction.followup.send(f"☀️ Digest publié dans {channel.mention}.", ephemeral=True)
+
+    @group.command(name="weekly", description="Publie le digest hebdomadaire immédiatement (test)")
+    async def weekly(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+        channel = await self._digest_channel()
+        if channel is None:
+            await interaction.followup.send(
+                "❌ Salon digest introuvable — configure-le avec `/config set-digest-channel`.",
+                ephemeral=True,
+            )
+            return
+        await self.weekly_digest()
+        await interaction.followup.send(f"🗓️ Digest publié dans {channel.mention}.", ephemeral=True)
 
     async def _digest_channel(self):
         cid = await self.bot.db.config_get("daily_digest_channel_id")
         if cid is None:
             cid = self.bot.settings.daily_digest_channel_id
-        return self.bot.get_channel(int(cid)) if cid else None
+        if not cid:
+            log.warning("Salon digest non configuré (/config set-digest-channel).")
+            return None
+        channel = self.bot.get_channel(int(cid))
+        if channel is None:
+            # Cache pas encore peuplé (juste après un redémarrage) → fetch direct API.
+            try:
+                channel = await self.bot.fetch_channel(int(cid))
+            except discord.HTTPException as exc:
+                log.error("Salon digest %s inaccessible (supprimé ? permissions ?) : %s", cid, exc)
+                return None
+        return channel
 
     # --- quotidien -----------------------------------------------------------
     async def daily_digest(self):
         channel = await self._digest_channel()
         if channel is None:
-            log.warning("Salon digest non configuré (/config set-digest-channel).")
             return
         # 1) Taux de change
         try:
@@ -82,6 +125,7 @@ class DailyCog(commands.Cog):
         )
         mentions = await mention_prefix(self.bot.db)
         await channel.send(content=mentions, embed=embed, allowed_mentions=PING_ALLOWED)
+        log.info("Digest quotidien publié dans #%s", channel)
 
     # --- hebdomadaire --------------------------------------------------------
     async def weekly_digest(self):

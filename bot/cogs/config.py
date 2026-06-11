@@ -14,6 +14,7 @@ INTERVAL_PLATFORMS = [
     app_commands.Choice(name="eBay", value="ebay"),
     app_commands.Choice(name="Vinted", value="vinted"),
     app_commands.Choice(name="Cardmarket", value="cardmarket"),
+    app_commands.Choice(name="Mercari JP", value="mercari"),
 ]
 
 

@@ -13,6 +13,7 @@ PLATFORM_COLORS = {
     "vinted": 0x09B1BA,
     "cardmarket": 0xFFC107,
     "ebay": 0xE53238,
+    "mercari": 0xFF0211,
     "japan:mercari": 0xFF0211,
     "japan:yahoo": 0xFF0033,
 }
