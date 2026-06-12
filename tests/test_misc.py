@@ -2,7 +2,7 @@ import pytest
 
 from bot.scrapers.base import parse_price
 from bot.scrapers.japan import fromjapan_url, parse_mercari_price
-from bot.services.fx_wise import _extract_wise_rate
+from bot.services.fx_wise import FxRate, _extract_wise_rate
 from bot.services.knowledge import split_sections
 from bot.services.price_monitor import trend_pct, window_prices
 
@@ -34,6 +34,20 @@ def test_parse_price(text, expected):
         ("12,000円", 12000.0, "JPY"),
         ("€1.234,56", 1234.56, "EUR"),
         ("", None, "JPY"),
+        # Texte de vignette complet : les chiffres du titre ne doivent PAS polluer le prix
+        ("ポケモンカード151 リザードン ¥12,345", 12345.0, "JPY"),
+        ("ポケモンカード151 リザードン 12,000円", 12000.0, "JPY"),
+        ("PSA10 リザードン 151 €56.93", 56.93, "EUR"),
+        # Chiffres APRÈS le prix (badges, ancienneté) : ne pas les concaténer
+        ("¥12,345 いいね3", 12345.0, "JPY"),
+        ("￥9,800 残り1点", 9800.0, "JPY"),
+        # Variantes de séparateurs : virgule pleine chasse, espaces (fine/insécable)
+        ("12，000円", 12000.0, "JPY"),
+        ("1 234,56 €", 1234.56, "EUR"),
+        ("1\xa0234,56 €", 1234.56, "EUR"),
+        # Pas de symbole monétaire → pas de prix fiable (jamais les chiffres du titre)
+        ("ポケモンカード151", None, "JPY"),
+        ("pas de prix", None, "JPY"),
     ],
 )
 def test_parse_mercari_price(text, amount, currency):
@@ -50,15 +64,29 @@ def test_fromjapan_url():
 
 
 def test_extract_wise_rate_list():
-    assert _extract_wise_rate([{"rate": 0.0062}]) == pytest.approx(0.0062)
+    assert _extract_wise_rate([{"rate": 185.4}]) == pytest.approx(185.4)
 
 
 def test_extract_wise_rate_obj():
-    assert _extract_wise_rate({"value": 0.0061}) == pytest.approx(0.0061)
+    assert _extract_wise_rate({"value": 183.96}) == pytest.approx(183.96)
 
 
 def test_extract_wise_rate_none():
     assert _extract_wise_rate({"foo": "bar"}) is None
+
+
+def test_extract_wise_rate_rejects_inverted_direction():
+    # Un taux JPY→EUR (~0.0054) n'est pas plausible pour EUR→JPY : rejeté.
+    assert _extract_wise_rate({"value": 0.00539}) is None
+    assert _extract_wise_rate({"value": 12345.0}) is None
+
+
+def test_fxrate_direction_eur_jpy():
+    # rate = 1 EUR en JPY → conversions dans les deux sens
+    fx = FxRate(rate=200.0, source="test", fetched_at=0.0)
+    assert fx.jpy_to_eur(1000.0) == pytest.approx(5.0)
+    assert fx.eur_to_jpy(5.0) == pytest.approx(1000.0)
+    assert FxRate(rate=0.0, source="test", fetched_at=0.0).jpy_to_eur(1000.0) == 0.0
 
 
 def test_split_sections():

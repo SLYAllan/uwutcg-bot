@@ -228,14 +228,14 @@ class TrackingCog(commands.Cog):
         """Convertit les prix Mercari JPY→EUR (taux Wise) : max_price, deal sniper et
         anti-arnaque raisonnent en € comme les autres plateformes. Le JPY d'origine
         reste dans extra["price_jpy"]."""
-        rate = None
+        fx = None
         out: list[Listing] = []
         for listing in listings:
             if listing.price is not None and listing.currency == "JPY":
-                if rate is None:
-                    rate = (await self.bot.fx.get_rate()).rate
+                if fx is None:
+                    fx = await self.bot.fx.get_rate()
                 listing.extra["price_jpy"] = listing.price
-                listing.price = round(listing.price * rate, 2)
+                listing.price = round(fx.jpy_to_eur(listing.price), 2)
                 listing.currency = "EUR"
             if max_price is not None and listing.price is not None and listing.price > max_price:
                 continue

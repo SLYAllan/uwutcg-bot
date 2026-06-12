@@ -83,7 +83,8 @@ def arbitrage_embed(res: ArbitrageResult, query: str) -> discord.Embed:
         value=(
             f"Base {c.base_eur:.2f} € · proxy {c.proxy_commission + c.proxy_fixed:.2f} € · "
             f"port {c.intl_shipping:.2f} € · TVA import {c.import_vat:.2f} €\n"
-            f"**Total {c.total:.2f} €** (≈ {res.jpy_price:.0f} JPY @ {res.fx_rate:.5f})"
+            f"**Total {c.total:.2f} €** (≈ {res.jpy_price:.0f} JPY @ 1 € = "
+            f"{1 / res.fx_rate if res.fx_rate else 0:.2f} JPY)"
         ),
         inline=False,
     )

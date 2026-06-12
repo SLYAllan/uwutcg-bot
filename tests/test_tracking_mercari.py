@@ -3,15 +3,12 @@ import pytest
 
 from bot.cogs.tracking import TrackingCog
 from bot.scrapers.base import Listing
-
-
-class _FakeRate:
-    rate = 0.006  # 1000 JPY = 6 €
+from bot.services.fx_wise import FxRate
 
 
 class _FakeFx:
     async def get_rate(self):
-        return _FakeRate()
+        return FxRate(rate=200.0, source="test", fetched_at=0.0)  # 1 € = 200 JPY
 
 
 class _FakeBot:
@@ -35,17 +32,17 @@ def _cog():
 @pytest.mark.asyncio
 async def test_mercari_to_eur_converts_jpy():
     out = await _cog()._mercari_to_eur([_listing(10000.0)], None)
-    assert out[0].price == pytest.approx(60.0)
+    assert out[0].price == pytest.approx(50.0)  # 10000 JPY / 200 = 50 €
     assert out[0].currency == "EUR"
     assert out[0].extra["price_jpy"] == 10000.0
 
 
 @pytest.mark.asyncio
 async def test_mercari_to_eur_filters_max_price():
-    listings = [_listing(10000.0), _listing(1000.0)]  # 60 € et 6 €
+    listings = [_listing(10000.0), _listing(1000.0)]  # 50 € et 5 €
     out = await _cog()._mercari_to_eur(listings, 10.0)
     assert len(out) == 1
-    assert out[0].price == pytest.approx(6.0)
+    assert out[0].price == pytest.approx(5.0)
 
 
 @pytest.mark.asyncio

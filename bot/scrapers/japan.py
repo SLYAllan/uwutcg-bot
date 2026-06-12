@@ -28,19 +28,37 @@ FROMJAPAN_ITEM = "https://www.fromjapan.co.jp/japan/en/mercari/item/{id}"
 THUMB_LINK = "a[data-testid=thumbnail-link]"
 ITEM_ID_RE = re.compile(r"/item/(m\d+)")
 
+# Montant ancré au symbole monétaire : groupes de milliers stricts (virgule, virgule
+# pleine chasse ，, point, espaces y compris insécables via \s) pour ne JAMAIS avaler
+# les chiffres du titre ou des badges (« いいね3 », « 残り1点 »).
+_SEP = r"[,，.\s]"
+_NUM = rf"\d{{1,3}}(?:{_SEP}\d{{3}})*(?:[.,]\d{{1,2}})?"
+_YEN_NUM = rf"\d{{1,3}}(?:{_SEP}\d{{3}})*"  # le yen n'a pas de décimales
+# Symbole AVANT le montant testé en premier : dans « titre 151 €56.93 », la forme
+# suffixe matcherait « 151 € » (plus tôt dans la chaîne) et prendrait le titre pour prix.
+_EUR_RES = (re.compile(rf"€\s*({_NUM})"), re.compile(rf"({_NUM})\s*€"))
+_YEN_RES = (re.compile(rf"[¥￥]\s*({_YEN_NUM})"), re.compile(rf"({_YEN_NUM})\s*円"))
+
 
 def parse_mercari_price(text: str) -> tuple[float | None, str]:
-    """Renvoie (montant, devise). ¥/円 → JPY (virgule = milliers), € → EUR."""
+    """Renvoie (montant, devise) extrait du texte d'une vignette Mercari.
+
+    Le texte peut contenir le titre et des badges : le montant est ancré au symbole
+    (€, ¥/￥, 円) — sans symbole, pas de prix fiable → None (un chiffre du titre
+    pris pour un prix fausserait le tracking et l'arbitrage).
+    """
     if not text:
         return None, "JPY"
-    if "€" in text:
-        return parse_price(text), "EUR"
-    if "¥" in text or "円" in text:
-        digits = re.sub(r"[^\d]", "", text.split("円")[0].split("¥")[-1])
-        return (float(digits) if digits else None), "JPY"
-    # défaut : nombre brut, supposé JPY
-    digits = re.sub(r"[^\d]", "", text)
-    return (float(digits) if digits else None), "JPY"
+    for rx in _EUR_RES:
+        m = rx.search(text)
+        if m:
+            return parse_price(m.group(1)), "EUR"
+    for rx in _YEN_RES:
+        m = rx.search(text)
+        if m:
+            digits = re.sub(r"\D", "", m.group(1))
+            return (float(digits) if digits else None), "JPY"
+    return None, "JPY"
 
 
 class MercariScraper:

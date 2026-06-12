@@ -88,7 +88,9 @@ def parse_price(text: str) -> float | None:
     m = re.search(r"(\d[\d\s.,]*)", text.replace("\xa0", " "))
     if not m:
         return None
-    raw = m.group(1).strip().replace(" ", "")
+    # \s couvre tous les espaces Unicode (insécable \xa0, fine  …) utilisés
+    # comme séparateurs de milliers — un simple replace(" ") les laissait passer.
+    raw = re.sub(r"\s", "", m.group(1))
     if "," in raw and "." in raw:
         if raw.rfind(",") > raw.rfind("."):  # virgule décimale (FR)
             raw = raw.replace(".", "").replace(",", ".")

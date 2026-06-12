@@ -84,7 +84,8 @@ class ArbitrageCog(commands.Cog):
             return
         rate = await self.bot.fx.get_rate()
         # Mercari peut afficher déjà en EUR (géo serveur UE) → pas de conversion dans ce cas.
-        effective_rate = 1.0 if jp.currency == "EUR" else rate.rate
+        # analyze() attend un multiplicateur JPY→EUR ; rate.rate est désormais EUR→JPY.
+        effective_rate = 1.0 if jp.currency == "EUR" else rate.jpy_to_eur(1.0)
         result = arb.analyze(
             jpy_price=jp.price,
             fx_rate=effective_rate,

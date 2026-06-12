@@ -83,7 +83,7 @@ class CalcCog(commands.Cog):
         if currency == "jpy":
             rate = await self.bot.fx.get_rate()
             purchase_eur = rate.jpy_to_eur(value)
-            header_cur = f"≈ {purchase_eur:.2f} € ({value:.0f} JPY @ {rate.rate:.5f})"
+            header_cur = f"≈ {purchase_eur:.2f} € ({value:.0f} JPY @ 1 € = {rate.rate:.2f} JPY)"
         cost = CostBreakdown(
             purchase=purchase_eur,
             import_fees=import_fees,
@@ -174,7 +174,7 @@ class CalcCog(commands.Cog):
             out = rate.eur_to_jpy(amount)
             msg = f"{amount:.2f} € = **{out:.0f} JPY**"
         tag = " _(fallback)_" if rate.is_fallback else ""
-        await interaction.followup.send(f"{msg}  · taux {rate.rate:.5f} ({rate.source}){tag}")
+        await interaction.followup.send(f"{msg}  · taux 1 € = {rate.rate:.2f} JPY ({rate.source}){tag}")
 
     # --- auto-réponse dans les salons calculateur ----------------------------
     @commands.Cog.listener()

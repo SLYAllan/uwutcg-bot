@@ -91,12 +91,12 @@ class DailyCog(commands.Cog):
         try:
             rate = await self.bot.fx.get_rate()
             tag = " (fallback)" if rate.is_fallback else ""
-            fx_line = f"**1 JPY = {rate.rate:.5f} €** · 1000 JPY = {rate.jpy_to_eur(1000):.2f} € — {rate.source}{tag}"
+            fx_line = f"**1 € = {rate.rate:.2f} JPY** · 1000 JPY = {rate.jpy_to_eur(1000):.2f} € — {rate.source}{tag}"
         except Exception as exc:  # noqa: BLE001
             fx_line = f"Taux indisponible : {exc}"
 
         embed = discord.Embed(title="☀️ Digest quotidien — UwUTCG", color=0xF1C40F)
-        embed.add_field(name="💱 JPY → EUR (Wise)", value=fx_line, inline=False)
+        embed.add_field(name="💱 EUR ⇄ JPY (Wise)", value=fx_line, inline=False)
 
         # 2) Synthèse monitoring : UNIQUEMENT les cartes dont le prix a changé depuis hier.
         monitors = await self.bot.db.fetchall("SELECT * FROM monitors")
