@@ -69,6 +69,31 @@ CF_CHALLENGE_MARKERS = ("just a moment", "challenges.cloudflare.com", "cf-chl", 
 CHALLENGE_RESOLVE_TIMEOUT = 20.0  # secondes
 
 
+def _resolve_stealth():
+    """Résout la fonction d'application du stealth selon la version installée.
+
+    playwright-stealth a CHANGÉ d'API en 2.0 : `stealth_async(page)` (1.x) a été
+    remplacé par `Stealth().apply_stealth_async(page_or_context)` (2.x). Sans cette
+    bascule, la 2.x lève ImportError → le rendu tournait SANS stealth, et Cloudflare
+    (Cardmarket) comme Mercari finissaient par bloquer → plus de monitor ni de notif
+    FromJapan. Renvoie une coroutine `(context) -> None`, ou None si rien d'installé.
+    """
+    try:
+        from playwright_stealth import Stealth  # 2.x
+        return Stealth().apply_stealth_async
+    except ImportError:
+        pass
+    try:
+        from playwright_stealth import stealth_async  # 1.x
+        return stealth_async
+    except ImportError:
+        log.warning("playwright-stealth absent : rendu sans stealth (risque de ban accru).")
+        return None
+
+
+_APPLY_STEALTH = _resolve_stealth()
+
+
 class DomainCooldownError(RuntimeError):
     """Domaine en cooldown anti-ban : la requête est refusée sans toucher le réseau."""
 
@@ -313,13 +338,11 @@ class ScrapeClient:
             viewport={"width": 1366, "height": 768},
         )
         try:
-            try:
-                from playwright_stealth import stealth_async  # optionnel
-            except ImportError:
-                stealth_async = None
+            # Stealth appliqué au CONTEXTE (couvre la page créée ensuite). API résolue
+            # au chargement du module pour gérer playwright-stealth 1.x ET 2.x.
+            if _APPLY_STEALTH:
+                await _APPLY_STEALTH(context)
             page = await context.new_page()
-            if stealth_async:
-                await stealth_async(page)
             resp = await page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
             if resp is not None and resp.status == 429:
                 self._trip_cooldown(domain)
