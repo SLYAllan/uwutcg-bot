@@ -6,6 +6,18 @@ conteneur, redémarre tout seul, et persiste sa base SQLite dans un volume.
 > ⚠️ **Un seul bot à la fois avec le même token.** Avant de lancer sur le VPS, **arrête
 > l'instance locale** (sinon Discord refuse la double connexion).
 
+## Dépendances : lockfile (build reproductible)
+Le Docker installe depuis **`requirements.lock`** (closure pinnée), pas `requirements.txt`.
+Chaque rebuild Coolify est ainsi identique au bit près — une dep ne peut plus sauter de
+version en silence (ce qui avait cassé monitor + FromJapan, cf. playwright-stealth 2.x).
+
+Après toute modif de `requirements.txt`, **régénérer le lock** puis re-tester :
+```bash
+python -m venv .venv && .venv/Scripts/pip install -r requirements.txt
+.venv/Scripts/pip freeze > requirements.lock
+.venv/Scripts/python -m pytest -q     # doit rester vert avant commit
+```
+
 ## 0. Pré-requis sur le VPS
 Docker + plugin compose installés :
 ```bash

@@ -7,8 +7,10 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /app
 
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt \
+# On installe depuis le LOCKFILE (closure pinnée) → build reproductible au bit près.
+# requirements.txt n'est gardé que comme source lisible des deps directes.
+COPY requirements.lock .
+RUN pip install --no-cache-dir -r requirements.lock \
     && python -m playwright install chromium
 
 COPY . .
