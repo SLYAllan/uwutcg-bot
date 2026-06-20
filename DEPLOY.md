@@ -11,12 +11,14 @@ Le Docker installe depuis **`requirements.lock`** (closure pinnée), pas `requir
 Chaque rebuild Coolify est ainsi identique au bit près — une dep ne peut plus sauter de
 version en silence (ce qui avait cassé monitor + FromJapan, cf. playwright-stealth 2.x).
 
-Après toute modif de `requirements.txt`, **régénérer le lock** puis re-tester :
+Après toute modif de `requirements.txt`, **régénérer le lock EN CONTENEUR** (PAS dans un
+venv local : le Python/OS y diffèrent → pins sans wheel pour l'image → build KO) :
 ```bash
-python -m venv .venv && .venv/Scripts/pip install -r requirements.txt
-.venv/Scripts/pip freeze > requirements.lock
-.venv/Scripts/python -m pytest -q     # doit rester vert avant commit
+docker run --rm -v "${PWD}:/app" -w /app \
+  mcr.microsoft.com/playwright/python:v1.47.0-jammy \
+  bash -c "pip install -q -r requirements.txt && pip freeze > requirements.lock && python -m pytest -q"
 ```
+Garder le **même tag d'image** que le `Dockerfile` ; pytest doit rester vert avant commit.
 
 ## 0. Pré-requis sur le VPS
 Docker + plugin compose installés :
