@@ -48,6 +48,16 @@ def _lang_value(choice: app_commands.Choice[str] | None) -> str | None:
     return choice.value
 
 
+def _tags(lang: str | None, threshold: float | None) -> str:
+    """Suffixe d'affichage « (Français · ≤ 50 €) » pour confirmations et listes."""
+    parts = []
+    if lang and lang in CM_LANGUAGES:
+        parts.append(CM_LANGUAGES[lang])
+    if threshold is not None:
+        parts.append(f"≤ {threshold:.2f} €")
+    return f" ({' · '.join(parts)})" if parts else ""
+
+
 class MonitorCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
@@ -65,6 +75,7 @@ class MonitorCog(commands.Cog):
         salon="Salon où publier le suivi (défaut : salon courant)",
         game="Jeu Cardmarket pour la recherche par nom (défaut : Pokémon)",
         langue="Langue des cartes à suivre (défaut : toutes)",
+        seuil="Alerte seuil (€) : ne ping que si le prix mini passe sous ce montant",
     )
     async def create(
         self,
@@ -73,6 +84,7 @@ class MonitorCog(commands.Cog):
         salon: discord.TextChannel | None = None,
         game: app_commands.Choice[str] | None = None,
         langue: app_commands.Choice[str] | None = None,
+        seuil: app_commands.Range[float, 0.0] | None = None,
     ):
         await interaction.response.defer(thinking=True, ephemeral=True)
         guild = interaction.guild
@@ -96,13 +108,14 @@ class MonitorCog(commands.Cog):
 
         lang = _lang_value(langue)
         monitor_id = await self.bot.db.execute(
-            "INSERT INTO monitors(card_name, url, channel_id, language) VALUES(?, ?, ?, ?)",
-            (card, url, channel.id, lang),
+            "INSERT INTO monitors(card_name, url, channel_id, language, threshold) "
+            "VALUES(?, ?, ?, ?, ?)",
+            (card, url, channel.id, lang, seuil),
         )
         await add_subscriber(self.bot.db, interaction.user.id)  # le créateur est pingué
-        lang_txt = f" ({CM_LANGUAGES[lang]})" if lang else ""
         await interaction.followup.send(
-            f"📈 Monitor #{monitor_id}{lang_txt} créé dans {channel.mention}", ephemeral=True
+            f"📈 Monitor #{monitor_id}{_tags(lang, seuil)} créé dans {channel.mention}",
+            ephemeral=True,
         )
         await self._update_one(
             await self.bot.db.fetchone("SELECT * FROM monitors WHERE id = ?", (monitor_id,)),
@@ -116,6 +129,7 @@ class MonitorCog(commands.Cog):
         salon="Salon où publier les suivis (défaut : salon courant)",
         game="Jeu Cardmarket pour la recherche par nom (défaut : Pokémon)",
         langue="Langue des cartes à suivre (défaut : toutes)",
+        seuil="Alerte seuil (€) appliquée à tous : ne ping que sous ce montant",
     )
     async def bulk(
         self,
@@ -124,6 +138,7 @@ class MonitorCog(commands.Cog):
         salon: discord.TextChannel | None = None,
         game: app_commands.Choice[str] | None = None,
         langue: app_commands.Choice[str] | None = None,
+        seuil: app_commands.Range[float, 0.0] | None = None,
     ):
         await interaction.response.defer(thinking=True, ephemeral=True)
         if interaction.guild is None:
@@ -153,15 +168,15 @@ class MonitorCog(commands.Cog):
                     continue
                 url, name = results[0].url, item
             monitor_id = await self.bot.db.execute(
-                "INSERT INTO monitors(card_name, url, channel_id, language) VALUES(?, ?, ?, ?)",
-                (name, url, channel.id, lang),
+                "INSERT INTO monitors(card_name, url, channel_id, language, threshold) "
+                "VALUES(?, ?, ?, ?, ?)",
+                (name, url, channel.id, lang, seuil),
             )
             created.append(monitor_id)
         await add_subscriber(self.bot.db, interaction.user.id)
-        lang_txt = f" ({CM_LANGUAGES[lang]})" if lang else ""
         msg = (
-            f"📈 {len(created)}/{len(items)} monitors{lang_txt} créés dans {channel.mention} — "
-            "les premières fiches arrivent au fil de l'eau."
+            f"📈 {len(created)}/{len(items)} monitors{_tags(lang, seuil)} créés dans "
+            f"{channel.mention} — les premières fiches arrivent au fil de l'eau."
         )
         if skipped:
             msg += "\n⚠️ Introuvables : " + ", ".join(f"`{s}`" for s in skipped)
@@ -184,16 +199,19 @@ class MonitorCog(commands.Cog):
     @group.command(name="list", description="Liste les monitors actifs")
     async def list_(self, interaction: discord.Interaction):
         rows = await self.bot.db.fetchall(
-            "SELECT id, card_name, channel_id, language FROM monitors ORDER BY id"
+            "SELECT id, card_name, channel_id, language, threshold, paused "
+            "FROM monitors ORDER BY id"
         )
         if not rows:
             await interaction.response.send_message("Aucun monitor.", ephemeral=True)
             return
         lines = []
         for r in rows:
-            lang = CM_LANGUAGES.get(r["language"]) if r["language"] else None
-            tag = f" `{lang}`" if lang else ""
-            lines.append(f"**#{r['id']}** {r['card_name']}{tag} → <#{r['channel_id']}>")
+            pause = "⏸️ " if r["paused"] else ""
+            lines.append(
+                f"{pause}**#{r['id']}** {r['card_name']}{_tags(r['language'], r['threshold'])}"
+                f" → <#{r['channel_id']}>"
+            )
         # Découpe en messages ≤ 2000 car. (la limite Discord) : sinon /monitor list
         # plante dès qu'il y a beaucoup de monitors (créés via /monitor bulk).
         chunks: list[str] = []
@@ -214,10 +232,72 @@ class MonitorCog(commands.Cog):
         await self.bot.db.execute("DELETE FROM monitors WHERE id = ?", (id,))
         await interaction.response.send_message(f"🗑️ Monitor #{id} supprimé.", ephemeral=True)
 
+    @group.command(name="pause", description="Met un monitor en pause (plus de poll ni de ping)")
+    async def pause(self, interaction: discord.Interaction, id: int):
+        await self._set_paused(interaction, id, True)
+
+    @group.command(name="resume", description="Relance un monitor en pause")
+    async def resume(self, interaction: discord.Interaction, id: int):
+        await self._set_paused(interaction, id, False)
+
+    async def _set_paused(self, interaction: discord.Interaction, id: int, paused: bool) -> None:
+        row = await self.bot.db.fetchone("SELECT id FROM monitors WHERE id = ?", (id,))
+        if row is None:
+            await interaction.response.send_message(f"Monitor #{id} introuvable.", ephemeral=True)
+            return
+        await self.bot.db.execute(
+            "UPDATE monitors SET paused = ? WHERE id = ?", (1 if paused else 0, id)
+        )
+        verb = "⏸️ en pause" if paused else "▶️ relancé"
+        await interaction.response.send_message(f"Monitor #{id} {verb}.", ephemeral=True)
+
+    @group.command(name="edit", description="Modifie langue / salon / seuil d'un monitor")
+    @app_commands.choices(langue=LANG_CHOICES)
+    @app_commands.describe(
+        id="ID du monitor (voir /monitor list)",
+        langue="Nouvelle langue Cardmarket",
+        salon="Nouveau salon de publication",
+        seuil="Nouveau seuil d'alerte (€). Mets 0 pour le retirer.",
+    )
+    async def edit(
+        self,
+        interaction: discord.Interaction,
+        id: int,
+        langue: app_commands.Choice[str] | None = None,
+        salon: discord.TextChannel | None = None,
+        seuil: app_commands.Range[float, 0.0] | None = None,
+    ):
+        row = await self.bot.db.fetchone("SELECT id FROM monitors WHERE id = ?", (id,))
+        if row is None:
+            await interaction.response.send_message(f"Monitor #{id} introuvable.", ephemeral=True)
+            return
+        sets: list[str] = []
+        params: list = []
+        if langue is not None:
+            sets.append("language = ?")
+            params.append(_lang_value(langue))
+        if salon is not None:
+            sets.append("channel_id = ?")
+            params.append(salon.id)
+        if seuil is not None:
+            # 0 = on retire le seuil (NULL) → repasse en notif à chaque variation.
+            sets.append("threshold = ?")
+            params.append(None if seuil == 0 else seuil)
+        if not sets:
+            await interaction.response.send_message(
+                "Rien à modifier : précise langue, salon ou seuil.", ephemeral=True
+            )
+            return
+        params.append(id)
+        await self.bot.db.execute(
+            f"UPDATE monitors SET {', '.join(sets)} WHERE id = ?", params
+        )
+        await interaction.response.send_message(f"✏️ Monitor #{id} mis à jour.", ephemeral=True)
+
     # --- polling -------------------------------------------------------------
     @tasks.loop(minutes=MONITOR_POLL_MINUTES)
     async def poll_loop(self):
-        rows = await self.bot.db.fetchall("SELECT * FROM monitors")
+        rows = await self.bot.db.fetchall("SELECT * FROM monitors WHERE paused = 0")
         for r in rows:
             try:
                 await self._update_one(r)
@@ -261,6 +341,11 @@ class MonitorCog(commands.Cog):
         )
         if not changed:
             return
+        # Alerte seuil : si un seuil est défini, on ne ping que quand le prix est SOUS
+        # le seuil. La 1re fiche (force, à la création) passe toujours, à titre informatif.
+        threshold = row["threshold"]
+        if not force and threshold is not None and (not has_price or detail.lowest_price > threshold):
+            return
         channel = self.bot.get_channel(int(row["channel_id"]))
         if channel is None:
             return
@@ -277,6 +362,8 @@ class MonitorCog(commands.Cog):
         lang_label = CM_LANGUAGES.get(lang) if lang else None
         title = f"📈 {detail.name}" + (f" · {lang_label}" if lang_label else "")
         embed = discord.Embed(title=title, url=detail.url, color=color)
+        if threshold is not None:
+            embed.set_footer(text=f"🔔 Alerte seuil ≤ {threshold:.2f} €")
         if detail.lowest_price is not None:
             val = f"{detail.lowest_price:.2f} €"
             if prev is not None and round(float(prev), 2) != round(detail.lowest_price, 2):

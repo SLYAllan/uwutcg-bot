@@ -47,6 +47,8 @@ CREATE TABLE IF NOT EXISTS monitors (
     channel_id   INTEGER,                -- salon dédié créé par le bot
     last_lowest  REAL,
     language     TEXT,                   -- id filtre langue Cardmarket (?language=X) ; NULL = toutes
+    threshold    REAL,                   -- alerte seuil : ne notifie que si prix <= ce montant (NULL = toute variation)
+    paused       INTEGER NOT NULL DEFAULT 0,  -- 1 = monitor en pause (pas de poll/notif)
     created_at   TEXT NOT NULL DEFAULT (datetime('now'))
 );
 

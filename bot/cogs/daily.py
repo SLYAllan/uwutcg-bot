@@ -99,7 +99,7 @@ class DailyCog(commands.Cog):
         embed.add_field(name="💱 EUR ⇄ JPY (Wise)", value=fx_line, inline=False)
 
         # 2) Synthèse monitoring : UNIQUEMENT les cartes dont le prix a changé depuis hier.
-        monitors = await self.bot.db.fetchall("SELECT * FROM monitors")
+        monitors = await self.bot.db.fetchall("SELECT * FROM monitors WHERE paused = 0")
         changed: list[tuple[float, str]] = []
         for m in monitors:
             prices = window_prices(
@@ -150,7 +150,7 @@ class DailyCog(commands.Cog):
             value=f"✅ {bought['c']} achetés · 📌 {saved['c']} sauvegardés · 🚫 {ignored['c']} ignorés",
             inline=False,
         )
-        monitors = await self.bot.db.fetchall("SELECT * FROM monitors")
+        monitors = await self.bot.db.fetchall("SELECT * FROM monitors WHERE paused = 0")
         lines = []
         for m in monitors:
             series = [dict(s) for s in await self.bot.db.price_series("monitor", m["id"], days=7)]

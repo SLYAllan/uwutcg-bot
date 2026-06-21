@@ -36,11 +36,23 @@ class Database:
         par CREATE TABLE IF NOT EXISTS)."""
         cur = await self._conn.execute("PRAGMA table_info(monitors)")
         cols = {r[1] for r in await cur.fetchall()}
+        added = []
         if "language" not in cols:
             # Langue Cardmarket (id du filtre ?language=X) ; NULL = toutes langues.
             await self._conn.execute("ALTER TABLE monitors ADD COLUMN language TEXT")
+            added.append("language")
+        if "threshold" not in cols:
+            # Alerte seuil : ne notifie que si prix <= ce montant ; NULL = toute variation.
+            await self._conn.execute("ALTER TABLE monitors ADD COLUMN threshold REAL")
+            added.append("threshold")
+        if "paused" not in cols:
+            await self._conn.execute(
+                "ALTER TABLE monitors ADD COLUMN paused INTEGER NOT NULL DEFAULT 0"
+            )
+            added.append("paused")
+        if added:
             await self._conn.commit()
-            log.info("Migration : colonne monitors.language ajoutée")
+            log.info("Migration : colonnes monitors.%s ajoutées", ", monitors.".join(added))
 
     async def close(self) -> None:
         if self._conn:
