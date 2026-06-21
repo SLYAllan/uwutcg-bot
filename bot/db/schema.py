@@ -46,6 +46,7 @@ CREATE TABLE IF NOT EXISTS monitors (
     url          TEXT,
     channel_id   INTEGER,                -- salon dédié créé par le bot
     last_lowest  REAL,
+    language     TEXT,                   -- id filtre langue Cardmarket (?language=X) ; NULL = toutes
     created_at   TEXT NOT NULL DEFAULT (datetime('now'))
 );
 

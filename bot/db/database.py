@@ -28,7 +28,19 @@ class Database:
         self._conn.row_factory = aiosqlite.Row
         await self._conn.executescript(SCHEMA)
         await self._conn.commit()
+        await self._migrate()
         log.info("Base de données prête : %s", self.path)
+
+    async def _migrate(self) -> None:
+        """Migrations idempotentes pour tables déjà créées en prod (ALTER non couvert
+        par CREATE TABLE IF NOT EXISTS)."""
+        cur = await self._conn.execute("PRAGMA table_info(monitors)")
+        cols = {r[1] for r in await cur.fetchall()}
+        if "language" not in cols:
+            # Langue Cardmarket (id du filtre ?language=X) ; NULL = toutes langues.
+            await self._conn.execute("ALTER TABLE monitors ADD COLUMN language TEXT")
+            await self._conn.commit()
+            log.info("Migration : colonne monitors.language ajoutée")
 
     async def close(self) -> None:
         if self._conn:

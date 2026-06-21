@@ -15,7 +15,7 @@ import logging
 import re
 from dataclasses import dataclass, field
 from statistics import median
-from urllib.parse import quote
+from urllib.parse import parse_qsl, quote, urlencode, urlsplit, urlunsplit
 
 from selectolax.parser import HTMLParser
 
@@ -24,6 +24,23 @@ from bot.scrapers.base import Listing, ScrapeClient, SoldStats, parse_price
 log = logging.getLogger(__name__)
 
 CM_BASE = "https://www.cardmarket.com/fr"
+
+# Filtre langue Cardmarket (?language=X). 1=EN 2=FR 3=DE 4=ES 5=IT 7=JP.
+CM_LANGUAGES = {"1": "Anglais", "2": "Français", "3": "Allemand",
+                "4": "Espagnol", "5": "Italien", "7": "Japonais"}
+
+
+def apply_language(url: str, lang_id: str | None) -> str:
+    """Ajoute/remplace le filtre ?language=X sur une URL produit Cardmarket.
+
+    lang_id None/"" (toutes langues) → URL inchangée. Préserve les autres params.
+    """
+    if not lang_id:
+        return url
+    parts = urlsplit(url)
+    query = [(k, v) for k, v in parse_qsl(parts.query) if k != "language"]
+    query.append(("language", lang_id))
+    return urlunsplit(parts._replace(query=urlencode(query)))
 
 # Slug de jeu dans l'URL Cardmarket. ⚠️ VÉRIFIER EN PROD le slug Riftbound exact.
 CM_GAMES = {

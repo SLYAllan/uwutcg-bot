@@ -17,6 +17,7 @@ from discord.ext import commands, tasks
 
 from bot.cogs.notify import PING_ALLOWED, add_subscriber, mention_prefix
 from bot.scrapers.base import DomainCooldownError
+from bot.scrapers.cardmarket import CM_LANGUAGES, apply_language
 from bot.services.price_monitor import build_price_chart, trend_pct, window_prices
 
 log = logging.getLogger(__name__)
@@ -27,6 +28,24 @@ GAME_CHOICES = [
     app_commands.Choice(name="Pokémon", value="pokemon"),
     app_commands.Choice(name="Riftbound", value="riftbound"),
 ]
+
+# Choix de langue Cardmarket. value "0" = toutes langues (aucun filtre).
+LANG_CHOICES = [
+    app_commands.Choice(name="Toutes langues", value="0"),
+    app_commands.Choice(name="Français", value="2"),
+    app_commands.Choice(name="Anglais", value="1"),
+    app_commands.Choice(name="Japonais", value="7"),
+    app_commands.Choice(name="Allemand", value="3"),
+    app_commands.Choice(name="Italien", value="5"),
+    app_commands.Choice(name="Espagnol", value="4"),
+]
+
+
+def _lang_value(choice: app_commands.Choice[str] | None) -> str | None:
+    """Choice langue → id stocké en base (None = toutes langues)."""
+    if choice is None or choice.value == "0":
+        return None
+    return choice.value
 
 
 class MonitorCog(commands.Cog):
@@ -40,11 +59,12 @@ class MonitorCog(commands.Cog):
     group = app_commands.Group(name="monitor", description="Suivi détaillé d'une carte Cardmarket")
 
     @group.command(name="create", description="Suit une carte dans un salon existant")
-    @app_commands.choices(game=GAME_CHOICES)
+    @app_commands.choices(game=GAME_CHOICES, langue=LANG_CHOICES)
     @app_commands.describe(
         card="Nom de la carte ou URL Cardmarket",
         salon="Salon où publier le suivi (défaut : salon courant)",
         game="Jeu Cardmarket pour la recherche par nom (défaut : Pokémon)",
+        langue="Langue des cartes à suivre (défaut : toutes)",
     )
     async def create(
         self,
@@ -52,6 +72,7 @@ class MonitorCog(commands.Cog):
         card: str,
         salon: discord.TextChannel | None = None,
         game: app_commands.Choice[str] | None = None,
+        langue: app_commands.Choice[str] | None = None,
     ):
         await interaction.response.defer(thinking=True, ephemeral=True)
         guild = interaction.guild
@@ -73,13 +94,15 @@ class MonitorCog(commands.Cog):
                 return
             url = results[0].url
 
+        lang = _lang_value(langue)
         monitor_id = await self.bot.db.execute(
-            "INSERT INTO monitors(card_name, url, channel_id) VALUES(?, ?, ?)",
-            (card, url, channel.id),
+            "INSERT INTO monitors(card_name, url, channel_id, language) VALUES(?, ?, ?, ?)",
+            (card, url, channel.id, lang),
         )
         await add_subscriber(self.bot.db, interaction.user.id)  # le créateur est pingué
+        lang_txt = f" ({CM_LANGUAGES[lang]})" if lang else ""
         await interaction.followup.send(
-            f"📈 Monitor #{monitor_id} créé dans {channel.mention}", ephemeral=True
+            f"📈 Monitor #{monitor_id}{lang_txt} créé dans {channel.mention}", ephemeral=True
         )
         await self._update_one(
             await self.bot.db.fetchone("SELECT * FROM monitors WHERE id = ?", (monitor_id,)),
@@ -87,11 +110,12 @@ class MonitorCog(commands.Cog):
         )
 
     @group.command(name="bulk", description="Crée plusieurs monitors d'un coup (cartes séparées par ;)")
-    @app_commands.choices(game=GAME_CHOICES)
+    @app_commands.choices(game=GAME_CHOICES, langue=LANG_CHOICES)
     @app_commands.describe(
         cards="Noms ou URLs Cardmarket séparés par ; (URLs recommandées : pas de recherche)",
         salon="Salon où publier les suivis (défaut : salon courant)",
         game="Jeu Cardmarket pour la recherche par nom (défaut : Pokémon)",
+        langue="Langue des cartes à suivre (défaut : toutes)",
     )
     async def bulk(
         self,
@@ -99,6 +123,7 @@ class MonitorCog(commands.Cog):
         cards: str,
         salon: discord.TextChannel | None = None,
         game: app_commands.Choice[str] | None = None,
+        langue: app_commands.Choice[str] | None = None,
     ):
         await interaction.response.defer(thinking=True, ephemeral=True)
         if interaction.guild is None:
@@ -112,6 +137,7 @@ class MonitorCog(commands.Cog):
         if not items:
             await interaction.followup.send("Aucune carte — sépare-les par `;`.", ephemeral=True)
             return
+        lang = _lang_value(langue)
         created: list[int] = []
         skipped: list[str] = []
         for item in items:
@@ -127,13 +153,14 @@ class MonitorCog(commands.Cog):
                     continue
                 url, name = results[0].url, item
             monitor_id = await self.bot.db.execute(
-                "INSERT INTO monitors(card_name, url, channel_id) VALUES(?, ?, ?)",
-                (name, url, channel.id),
+                "INSERT INTO monitors(card_name, url, channel_id, language) VALUES(?, ?, ?, ?)",
+                (name, url, channel.id, lang),
             )
             created.append(monitor_id)
         await add_subscriber(self.bot.db, interaction.user.id)
+        lang_txt = f" ({CM_LANGUAGES[lang]})" if lang else ""
         msg = (
-            f"📈 {len(created)}/{len(items)} monitors créés dans {channel.mention} — "
+            f"📈 {len(created)}/{len(items)} monitors{lang_txt} créés dans {channel.mention} — "
             "les premières fiches arrivent au fil de l'eau."
         )
         if skipped:
@@ -156,12 +183,31 @@ class MonitorCog(commands.Cog):
 
     @group.command(name="list", description="Liste les monitors actifs")
     async def list_(self, interaction: discord.Interaction):
-        rows = await self.bot.db.fetchall("SELECT id, card_name, channel_id FROM monitors ORDER BY id")
+        rows = await self.bot.db.fetchall(
+            "SELECT id, card_name, channel_id, language FROM monitors ORDER BY id"
+        )
         if not rows:
             await interaction.response.send_message("Aucun monitor.", ephemeral=True)
             return
-        lines = [f"**#{r['id']}** {r['card_name']} → <#{r['channel_id']}>" for r in rows]
-        await interaction.response.send_message("\n".join(lines), ephemeral=True)
+        lines = []
+        for r in rows:
+            lang = CM_LANGUAGES.get(r["language"]) if r["language"] else None
+            tag = f" `{lang}`" if lang else ""
+            lines.append(f"**#{r['id']}** {r['card_name']}{tag} → <#{r['channel_id']}>")
+        # Découpe en messages ≤ 2000 car. (la limite Discord) : sinon /monitor list
+        # plante dès qu'il y a beaucoup de monitors (créés via /monitor bulk).
+        chunks: list[str] = []
+        buf = ""
+        for line in lines:
+            if len(buf) + len(line) + 1 > 1900:
+                chunks.append(buf)
+                buf = ""
+            buf += line + "\n"
+        if buf:
+            chunks.append(buf)
+        await interaction.response.send_message(chunks[0], ephemeral=True)
+        for chunk in chunks[1:]:
+            await interaction.followup.send(chunk, ephemeral=True)
 
     @group.command(name="remove", description="Supprime un monitor")
     async def remove(self, interaction: discord.Interaction, id: int):
@@ -189,7 +235,8 @@ class MonitorCog(commands.Cog):
     async def _update_one(self, row, force: bool = False) -> None:
         if row is None:
             return
-        detail = await self.bot.cardmarket.product_detail(row["url"])
+        lang = row["language"]
+        detail = await self.bot.cardmarket.product_detail(apply_language(row["url"], lang))
         # Page sans la moindre donnée produit (challenge Cloudflare, HTML inattendu…) :
         # on ne publie PAS de fiche vide, le prochain cycle réessaiera.
         if detail.lowest_price is None and not (detail.total_available or detail.offers_count):
@@ -227,7 +274,9 @@ class MonitorCog(commands.Cog):
         color = 0xFFC107
         if has_price and prev is not None:
             color = 0x2ECC71 if detail.lowest_price < float(prev) else 0xE74C3C
-        embed = discord.Embed(title=f"📈 {detail.name}", url=detail.url, color=color)
+        lang_label = CM_LANGUAGES.get(lang) if lang else None
+        title = f"📈 {detail.name}" + (f" · {lang_label}" if lang_label else "")
+        embed = discord.Embed(title=title, url=detail.url, color=color)
         if detail.lowest_price is not None:
             val = f"{detail.lowest_price:.2f} €"
             if prev is not None and round(float(prev), 2) != round(detail.lowest_price, 2):
