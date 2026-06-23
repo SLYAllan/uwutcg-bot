@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import io
 import logging
+from urllib.parse import urlsplit
 
 import discord
 from discord import app_commands
@@ -61,6 +62,9 @@ def _tags(lang: str | None, threshold: float | None) -> str:
 class MonitorCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
+        # Décalage de départ du balayage : avance après chaque cooldown anti-ban pour
+        # que les derniers monitors ne soient pas systématiquement affamés (voir poll_loop).
+        self._poll_offset = 0
         self.poll_loop.start()
 
     def cog_unload(self):
@@ -297,20 +301,63 @@ class MonitorCog(commands.Cog):
     # --- polling -------------------------------------------------------------
     @tasks.loop(minutes=MONITOR_POLL_MINUTES)
     async def poll_loop(self):
-        rows = await self.bot.db.fetchall("SELECT * FROM monitors WHERE paused = 0")
-        for r in rows:
+        rows = await self.bot.db.fetchall(
+            "SELECT * FROM monitors WHERE paused = 0 ORDER BY id"
+        )
+        if not rows:
+            return
+        # Rotation anti-famine : on démarre là où le cycle précédent a calé sur un
+        # cooldown anti-ban. Sinon, avec beaucoup de monitors, le même cooldown coupe
+        # toujours au même endroit et les DERNIERS monitors ne sont jamais pollés.
+        n = len(rows)
+        start = self._poll_offset % n
+        ordered = rows[start:] + rows[:start]
+        cooled: set[str] = set()
+        resume_at: int | None = None
+        for i, r in enumerate(ordered):
+            domain = urlsplit(r["url"]).netloc or "?"
+            if domain in cooled:
+                # Domaine déjà en cooldown ce cycle-ci : on saute sans toucher le réseau
+                # et on note le 1er non-traité pour reprendre ici au prochain cycle.
+                if resume_at is None:
+                    resume_at = (start + i) % n
+                continue
             try:
                 await self._update_one(r)
             except DomainCooldownError as e:
-                # Ban détecté : inutile d'enchaîner les autres monitors du même domaine.
-                log.warning("Monitors suspendus (anti-ban) : %s", e)
-                break
+                # Ban détecté : on reporte ce domaine (et ses monitors suivants) au
+                # prochain cycle, mais on N'ABORTE PAS tout — d'autres domaines passent.
+                log.warning("Domaine %s en cooldown (anti-ban) : %s", domain, e)
+                cooled.add(domain)
+                if resume_at is None:
+                    resume_at = (start + i) % n
             except Exception:  # noqa: BLE001
                 log.exception("Échec update monitor #%s", r["id"])
+        # Cycle complet sans cooldown → on repart du début ; sinon reprise au point calé.
+        self._poll_offset = resume_at if resume_at is not None else 0
 
     @poll_loop.before_loop
     async def _before(self):
         await self.bot.wait_until_ready()
+
+    async def _resolve_channel(self, channel_id):
+        """Salon de publication, avec fallback API si le cache n'est pas peuplé.
+
+        get_channel ne lit que le cache (vide juste après un redémarrage) → sans
+        fallback fetch_channel, _update_one abandonnait SILENCIEUSEMENT et aucune
+        fiche n'était publiée. On log explicitement si le salon est inaccessible.
+        """
+        channel = self.bot.get_channel(int(channel_id))
+        if channel is None:
+            try:
+                channel = await self.bot.fetch_channel(int(channel_id))
+            except discord.HTTPException as exc:
+                log.error(
+                    "Monitor : salon %s inaccessible (supprimé ? bot absent du salon ?) : %s",
+                    channel_id, exc,
+                )
+                return None
+        return channel
 
     async def _update_one(self, row, force: bool = False) -> None:
         if row is None:
@@ -346,7 +393,7 @@ class MonitorCog(commands.Cog):
         threshold = row["threshold"]
         if not force and threshold is not None and (not has_price or detail.lowest_price > threshold):
             return
-        channel = self.bot.get_channel(int(row["channel_id"]))
+        channel = await self._resolve_channel(row["channel_id"])
         if channel is None:
             return
 
@@ -412,7 +459,23 @@ class MonitorCog(commands.Cog):
             file = discord.File(io.BytesIO(png), filename="price.png")
             embed.set_image(url="attachment://price.png")
         mentions = await mention_prefix(self.bot.db)
-        await channel.send(content=mentions, embed=embed, file=file, allowed_mentions=PING_ALLOWED)
+        try:
+            await channel.send(
+                content=mentions, embed=embed, file=file, allowed_mentions=PING_ALLOWED
+            )
+        except discord.Forbidden:
+            # Cause n°1 du « monitor créé mais aucune fiche reçue » : le bot n'a pas le
+            # droit d'écrire dans ce salon. On le dit clairement dans les logs.
+            log.error(
+                "Monitor #%s : envoi REFUSÉ dans #%s — le bot n'a pas la permission "
+                "« Envoyer des messages » dans ce salon.",
+                row["id"], getattr(channel, "name", row["channel_id"]),
+            )
+        except discord.HTTPException as exc:
+            log.error(
+                "Monitor #%s : échec d'envoi dans #%s : %s",
+                row["id"], getattr(channel, "name", row["channel_id"]), exc,
+            )
 
 
 async def setup(bot: commands.Bot):
