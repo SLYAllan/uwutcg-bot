@@ -46,6 +46,21 @@ def _is_retryable(exc: BaseException) -> bool:
         return code == 429 or code >= 500
     return False
 
+
+# Empreintes d'un navigateur Playwright mort (driver Chromium tombé). Match sur le
+# message car le type varie selon les versions (Error / TargetClosedError…).
+_BROWSER_DEAD_MARKERS = (
+    "connection closed",
+    "target page, context or browser has been closed",
+    "browser has been closed",
+    "browser closed",
+)
+
+
+def _is_browser_dead(exc: BaseException) -> bool:
+    msg = str(exc).lower()
+    return any(m in msg for m in _BROWSER_DEAD_MARKERS)
+
 # User-agents réalistes (desktop récents). Étendre au besoin.
 USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -283,18 +298,70 @@ class ScrapeClient:
 
     # --- Playwright (Cloudflare / JS) ----------------------------------------
     async def _ensure_browser(self):
-        """Lazy-init du navigateur chromium partagé + stealth si dispo."""
+        """Lazy-init du navigateur chromium partagé, avec AUTO-RELANCE s'il est mort.
+
+        Le driver Chromium peut tomber en prod (« Connection closed while reading from
+        the driver », typiquement /dev/shm saturé en conteneur). Avant ce correctif,
+        self._browser pointait alors un objet HS jamais remis à None : TOUS les render()
+        suivants (monitor Cardmarket, Japan, Mercari) échouaient à l'infini jusqu'au
+        redémarrage. On vérifie donc is_connected() et on relance un navigateur neuf.
+        """
         async with self._pw_lock:
-            if self._browser is not None:
+            if self._browser is not None and self._browser.is_connected():
                 return self._browser
+            if self._browser is not None:
+                log.warning("Navigateur Playwright HS (driver tombé) : redémarrage complet.")
+            await self._teardown_pw_locked()
             from playwright.async_api import async_playwright  # import paresseux
 
             self._pw = await async_playwright().start()
             self._browser = await self._pw.chromium.launch(
                 headless=True,
-                args=["--disable-blink-features=AutomationControlled", "--no-sandbox"],
+                args=[
+                    "--disable-blink-features=AutomationControlled",
+                    "--no-sandbox",
+                    # /dev/shm = 64 Mo par défaut en conteneur Docker : Chromium le sature
+                    # et le driver crashe. Ce flag le fait écrire dans /tmp à la place.
+                    "--disable-dev-shm-usage",
+                ],
             )
             return self._browser
+
+    async def _teardown_pw_locked(self) -> None:
+        """Ferme browser + playwright (appel SOUS _pw_lock) en ignorant les erreurs :
+        l'objet est peut-être déjà mort, on veut juste repartir d'un état propre."""
+        if self._browser is not None:
+            try:
+                await self._browser.close()
+            except Exception:  # noqa: BLE001 - déjà HS, on ignore
+                pass
+            self._browser = None
+        if self._pw is not None:
+            try:
+                await self._pw.stop()
+            except Exception:  # noqa: BLE001 - déjà HS, on ignore
+                pass
+            self._pw = None
+
+    async def _new_context(self, locale: str):
+        """Crée un contexte navigateur, avec un essai de relance si le browser meurt
+        pile pendant l'appel (course : vivant à _ensure_browser, mort à new_context)."""
+        opts = dict(
+            user_agent=self._ua(),
+            locale=locale,
+            viewport={"width": 1366, "height": 768},
+        )
+        browser = await self._ensure_browser()
+        try:
+            return await browser.new_context(**opts)
+        except Exception as exc:  # noqa: BLE001
+            if not _is_browser_dead(exc):
+                raise
+            log.warning("new_context a échoué (browser HS) : relance puis nouvel essai.")
+            async with self._pw_lock:
+                await self._teardown_pw_locked()
+            browser = await self._ensure_browser()
+            return await browser.new_context(**opts)
 
     async def _wait_challenge(self, page, domain: str) -> None:
         """Attend la résolution d'un challenge JS Cloudflare (« Just a moment… »).
@@ -331,12 +398,7 @@ class ScrapeClient:
         domain = self._domain(url)
         self._check_cooldown(domain)
         await self._limiter.acquire(domain, min_interval or self.min_interval)
-        browser = await self._ensure_browser()
-        context = await browser.new_context(
-            user_agent=self._ua(),
-            locale=locale,
-            viewport={"width": 1366, "height": 768},
-        )
+        context = await self._new_context(locale)
         try:
             # Stealth appliqué au CONTEXTE (couvre la page créée ensuite). API résolue
             # au chargement du module pour gérer playwright-stealth 1.x ET 2.x.
