@@ -38,6 +38,18 @@ VINTED_KEYS = {
 }
 
 
+class VintedSessionError(RuntimeError):
+    """La home a répondu, mais sans poser le cookie de session : l'API est inutilisable."""
+
+    def __init__(self, cookies: list[str]):
+        super().__init__(
+            "Vinted n'a pas délivré de cookie access_token_web (tous les appels API "
+            "répondront 401). La home a répondu 200 mais n'a posé que : "
+            f"{', '.join(cookies) or 'aucun cookie'}. Cause probable : IP du serveur "
+            "refusée (datacenter/VPS) ou page d'attente Cloudflare."
+        )
+
+
 class VintedScraper:
     def __init__(self, client: ScrapeClient):
         self.client = client
@@ -58,9 +70,30 @@ class VintedScraper:
         if self._session_ready and not force:
             return
         await self.client.start()
+        self._session_ready = False
+        if force:
+            # Le client httpx vit aussi longtemps que le bot (des semaines). Au bout d'un
+            # moment sa session Vinted se périme et l'API répond 401 EN BOUCLE : re-visiter
+            # la home ne répare rien, car le serveur voit un cookie déjà posé et n'en
+            # redonne pas. Seul un processus neuf repartait. On jette donc les cookies
+            # Vinted avant de re-visiter : même effet qu'un redémarrage, sans redémarrage.
+            self._purge_cookies()
         await self.client.get(self.base_url, min_interval=5.0)
+        # On VÉRIFIE que le cookie est bien là. Sans ce contrôle, une home qui répond 200
+        # sans rien poser laissait le bot boucler en 401 à l'infini, avec un traceback
+        # httpx qui ne disait pas ce qui manquait.
+        if VINTED_KEYS["access_cookie"] not in self.client.cookies:
+            raise VintedSessionError(sorted(self.client.cookies.keys()))
         self._session_ready = True
-        log.info("Session Vinted initialisée (cookies dans le jar httpx)")
+        log.info("Session Vinted initialisée (access_token_web obtenu)")
+
+    def _purge_cookies(self) -> None:
+        """Vide du jar partagé les seuls cookies Vinted (les autres scrapers y vivent)."""
+        jar = self.client.cookies.jar
+        root = self._domain.removeprefix("www.")
+        for cookie in list(jar):
+            if (cookie.domain or "").lstrip(".").endswith(root):
+                jar.clear(cookie.domain, cookie.path, cookie.name)
 
     async def search_active(
         self, query: str, *, per_page: int = 24, max_price: float | None = None

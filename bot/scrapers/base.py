@@ -255,6 +255,11 @@ class ScrapeClient:
             self._pw = None
 
     # --- helpers -------------------------------------------------------------
+    @property
+    def cookies(self) -> httpx.Cookies:
+        """Jar partagé, en lecture : un scraper peut vérifier ses cookies de session."""
+        return self._http.cookies if self._http is not None else httpx.Cookies()
+
     @staticmethod
     def _domain(url: str) -> str:
         return httpx.URL(url).host or "unknown"
