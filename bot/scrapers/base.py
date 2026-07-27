@@ -102,6 +102,9 @@ CHALLENGE_RESOLVE_TIMEOUT = 20.0  # secondes
 # page) → appelé UNIQUEMENT quand le navigateur est bloqué, jamais en temps normal.
 FIRECRAWL_ENDPOINT = "https://api.firecrawl.dev/v2/scrape"
 FIRECRAWL_TIMEOUT = 120.0
+# Plafond quotidien : l'offre gratuite donne 1000 crédits/mois. À 30/jour on reste
+# dessous (≈900), donc le repli ne peut pas déclencher de facture.
+FIRECRAWL_DAILY_BUDGET = 30
 
 
 def _resolve_stealth():
@@ -233,6 +236,9 @@ class ScrapeClient:
         # Disjoncteur anti-ban par domaine
         self._cooldown_until: dict[str, float] = {}
         self._cooldown_strikes: dict[str, int] = {}
+        # Compteur de crédits Firecrawl du jour (repli payant)
+        self._fc_jour = -1
+        self._fc_utilises = 0
 
     # --- disjoncteur anti-ban --------------------------------------------------
     def _check_cooldown(self, domain: str) -> None:
@@ -405,6 +411,19 @@ class ScrapeClient:
                 raise DomainCooldownError(domain, self._cooldown_until[domain])
             await asyncio.sleep(2.0)
 
+    def _budget_firecrawl(self) -> bool:
+        """Reste-t-il des crédits pour aujourd'hui ? Remet le compteur à zéro chaque jour."""
+        jour = time.gmtime().tm_yday
+        if jour != self._fc_jour:
+            self._fc_jour, self._fc_utilises = jour, 0
+        if self._fc_utilises >= FIRECRAWL_DAILY_BUDGET:
+            log.warning(
+                "Budget Firecrawl du jour épuisé (%d crédits) — page non rendue.",
+                FIRECRAWL_DAILY_BUDGET,
+            )
+            return False
+        return True
+
     async def _render_firecrawl(self, url: str) -> str | None:
         """Rend la page via Firecrawl, depuis ses IP à lui.
 
@@ -416,6 +435,8 @@ class ScrapeClient:
         """
         key = get_settings().firecrawl_api_key
         if not key:
+            return None
+        if not self._budget_firecrawl():
             return None
         await self.start()
         try:
@@ -432,7 +453,11 @@ class ScrapeClient:
             return None
         if not html:
             return None
-        log.info("Repli Firecrawl utilisé pour %s (1 crédit)", url)
+        self._fc_utilises += 1
+        log.info(
+            "Repli Firecrawl utilisé pour %s (%d/%d crédits aujourd'hui)",
+            url, self._fc_utilises, FIRECRAWL_DAILY_BUDGET,
+        )
         return html
 
     async def render(

@@ -87,3 +87,26 @@ def test_200_normal_n_est_pas_un_blocage():
 def test_page_de_ban_reelle_servie_en_200():
     """HTML capturé sur la vraie page de blocage Cardmarket, pas une chaîne inventée."""
     assert is_blocked(status=200, html=BLOCAGE_REEL.read_text(encoding="utf-8")) is True
+
+
+# --- plafond de credits : le repli ne doit jamais declencher de facture --------
+@pytest.mark.asyncio
+async def test_budget_quotidien_coupe_le_repli(monkeypatch):
+    from bot.scrapers.base import FIRECRAWL_DAILY_BUDGET
+
+    c = ScrapeClient()
+    monkeypatch.setattr("bot.scrapers.base.get_settings",
+                        lambda: type("S", (), {"firecrawl_api_key": "fc-test"})())
+    c._fc_jour, c._fc_utilises = __import__("time").gmtime().tm_yday, FIRECRAWL_DAILY_BUDGET
+    assert await c._render_firecrawl("https://www.cardmarket.com/x") is None
+    assert c._http is None  # budget epuise -> aucune requete payante partie
+
+
+@pytest.mark.asyncio
+async def test_compteur_remis_a_zero_chaque_jour(monkeypatch):
+    from bot.scrapers.base import FIRECRAWL_DAILY_BUDGET
+
+    c = ScrapeClient()
+    c._fc_jour, c._fc_utilises = -99, FIRECRAWL_DAILY_BUDGET  # "hier", quota plein
+    assert c._budget_firecrawl() is True
+    assert c._fc_utilises == 0

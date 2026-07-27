@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 import io
 import logging
-from urllib.parse import urlsplit
+import time
 
 import discord
 from discord import app_commands
@@ -23,7 +23,11 @@ from bot.services.price_monitor import build_price_chart, trend_pct, window_pric
 
 log = logging.getLogger(__name__)
 
-MONITOR_POLL_MINUTES = 180  # 3 h : Cardmarket via Playwright, on espace les hits
+# Fraîcheur visée par carte. Le rythme réel en découle : une page toutes les
+# MONITOR_REFRESH_HOURS / nb_monitors. Avec 200 cartes sur 24 h → une page / 7 min,
+# au lieu des rafales de 200 pages qui faisaient bannir l'IP par Cardmarket.
+MONITOR_REFRESH_HOURS = 24
+MONITOR_TICK_SECONDS = 60  # granularité de l'ordonnanceur
 
 GAME_CHOICES = [
     app_commands.Choice(name="Pokémon", value="pokemon"),
@@ -62,9 +66,7 @@ def _tags(lang: str | None, threshold: float | None) -> str:
 class MonitorCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        # Décalage de départ du balayage : avance après chaque cooldown anti-ban pour
-        # que les derniers monitors ne soient pas systématiquement affamés (voir poll_loop).
-        self._poll_offset = 0
+        self._last: dict[int, float] = {}  # monitor_id -> dernier passage (monotonic)
         self.poll_loop.start()
 
     def cog_unload(self):
@@ -299,7 +301,7 @@ class MonitorCog(commands.Cog):
         await interaction.response.send_message(f"✏️ Monitor #{id} mis à jour.", ephemeral=True)
 
     # --- polling -------------------------------------------------------------
-    @tasks.loop(minutes=MONITOR_POLL_MINUTES)
+    @tasks.loop(seconds=MONITOR_TICK_SECONDS)
     async def poll_loop(self):
         """Balayage des monitors actifs.
 
@@ -313,40 +315,35 @@ class MonitorCog(commands.Cog):
             log.exception("Cycle de monitoring en échec — la boucle continue")
 
     async def _sweep(self) -> None:
+        """Rafraîchit UN monitor par tour, le plus en retard d'abord.
+
+        Avant, on balayait tous les monitors d'affilée toutes les 3 h : avec ~200
+        cartes, une rafale de 200 pages en 25 min, 8 fois par jour. C'est ce rythme
+        qui a fait bannir l'IP par Cardmarket. On étale : chaque carte est revue une
+        fois par MONITOR_REFRESH_HOURS, soit une page toutes les quelques minutes.
+        """
         rows = await self.bot.db.fetchall(
             "SELECT * FROM monitors WHERE paused = 0 ORDER BY id"
         )
         if not rows:
             return
-        # Rotation anti-famine : on démarre là où le cycle précédent a calé sur un
-        # cooldown anti-ban. Sinon, avec beaucoup de monitors, le même cooldown coupe
-        # toujours au même endroit et les DERNIERS monitors ne sont jamais pollés.
-        n = len(rows)
-        start = self._poll_offset % n
-        ordered = rows[start:] + rows[:start]
-        cooled: set[str] = set()
-        resume_at: int | None = None
-        for i, r in enumerate(ordered):
-            domain = urlsplit(r["url"]).netloc or "?"
-            if domain in cooled:
-                # Domaine déjà en cooldown ce cycle-ci : on saute sans toucher le réseau
-                # et on note le 1er non-traité pour reprendre ici au prochain cycle.
-                if resume_at is None:
-                    resume_at = (start + i) % n
-                continue
-            try:
-                await self._update_one(r)
-            except DomainCooldownError as e:
-                # Ban détecté : on reporte ce domaine (et ses monitors suivants) au
-                # prochain cycle, mais on N'ABORTE PAS tout — d'autres domaines passent.
-                log.warning("Domaine %s en cooldown (anti-ban) : %s", domain, e)
-                cooled.add(domain)
-                if resume_at is None:
-                    resume_at = (start + i) % n
-            except Exception:  # noqa: BLE001
-                log.exception("Échec update monitor #%s", r["id"])
-        # Cycle complet sans cooldown → on repart du début ; sinon reprise au point calé.
-        self._poll_offset = resume_at if resume_at is not None else 0
+        now = time.monotonic()
+        fenetre = MONITOR_REFRESH_HOURS * 3600
+        for i, r in enumerate(rows):
+            # 1re vision d'un monitor : on l'étale dans la fenêtre, sinon les 200
+            # cartes deviennent dues en même temps et la rafale revient au démarrage.
+            self._last.setdefault(r["id"], now - fenetre * (i + 1) / len(rows))
+        en_retard = [r for r in rows if now - self._last[r["id"]] >= fenetre]
+        if not en_retard:
+            return
+        r = max(en_retard, key=lambda row: now - self._last[row["id"]])
+        self._last[r["id"]] = now
+        try:
+            await self._update_one(r)
+        except DomainCooldownError as e:
+            log.warning("Monitor #%s reporté (anti-ban) : %s", r["id"], e)
+        except Exception:  # noqa: BLE001
+            log.exception("Échec update monitor #%s", r["id"])
 
     @poll_loop.before_loop
     async def _before(self):
