@@ -162,7 +162,19 @@ class TrackingCog(commands.Cog):
 
     @tasks.loop(seconds=TICK_SECONDS)
     async def poll_loop(self):
-        """Ordonnanceur : lance uniquement les recherches dues, en parallèle."""
+        """Ordonnanceur : lance uniquement les recherches dues, en parallèle.
+
+        discord.py ne réessaye QUE les erreurs réseau : toute autre exception qui
+        sort d'ici (hoquet SQLite, bug…) arrête la boucle POUR DE BON, sans rien
+        dire — plus aucune alerte jusqu'au redémarrage du conteneur. On avale donc
+        tout : un tick raté vaut mieux qu'un tracking mort.
+        """
+        try:
+            await self._tick()
+        except Exception:  # noqa: BLE001
+            log.exception("Tick de polling en échec — la boucle continue")
+
+    async def _tick(self) -> None:
         intervals = await self._intervals()
         rows = await self.bot.db.fetchall(
             "SELECT id, platform, query, channel_id, max_price FROM tracked_searches "

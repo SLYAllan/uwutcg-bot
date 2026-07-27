@@ -301,6 +301,18 @@ class MonitorCog(commands.Cog):
     # --- polling -------------------------------------------------------------
     @tasks.loop(minutes=MONITOR_POLL_MINUTES)
     async def poll_loop(self):
+        """Balayage des monitors actifs.
+
+        Même garde que côté tracking : discord.py ne réessaye que les erreurs
+        réseau, donc une exception qui sort d'ici tue la boucle définitivement et
+        le monitoring s'arrête en silence. On avale tout.
+        """
+        try:
+            await self._sweep()
+        except Exception:  # noqa: BLE001
+            log.exception("Cycle de monitoring en échec — la boucle continue")
+
+    async def _sweep(self) -> None:
         rows = await self.bot.db.fetchall(
             "SELECT * FROM monitors WHERE paused = 0 ORDER BY id"
         )
