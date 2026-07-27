@@ -27,6 +27,8 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import httpx
+
+from bot.config import get_settings
 from tenacity import (
     retry,
     retry_if_exception,
@@ -57,6 +59,18 @@ _BROWSER_DEAD_MARKERS = (
 )
 
 
+def is_blocked(status: int | None = None, html: str = "") -> bool:
+    """Cloudflare nous refuse la page ?
+
+    Deux formes : un code franc (403 pare-feu, 429 rate-limit) ou une page de ban
+    servie en 200, qu'il faut reconnaître au texte.
+    """
+    if status in (403, 429):
+        return True
+    head = html[:5000].lower()
+    return any(marker in head for marker in CF_BAN_MARKERS)
+
+
 def _is_browser_dead(exc: BaseException) -> bool:
     msg = str(exc).lower()
     return any(m in msg for m in _BROWSER_DEAD_MARKERS)
@@ -77,11 +91,17 @@ DEFAULT_MIN_INTERVAL = 3.0
 COOLDOWN_BASE_SECONDS = 15 * 60
 COOLDOWN_MAX_SECONDS = 2 * 3600
 # Empreintes d'une page de ban/challenge Cloudflare (cherchées dans le HTML rendu).
-CF_BAN_MARKERS = ("error 1015", "you are being rate limited", "cf-error-details")
+CF_BAN_MARKERS = ("error 1015", "you are being rate limited", "cf-error-details",
+                  "attention required")
 # Page de challenge JS (« Just a moment… ») : pas un ban, mais la page utile n'est
 # pas encore là — on attend qu'elle se résolve avant de rendre le HTML.
 CF_CHALLENGE_MARKERS = ("just a moment", "challenges.cloudflare.com", "cf-chl", "checking your browser")
 CHALLENGE_RESOLVE_TIMEOUT = 20.0  # secondes
+
+# Repli de rendu : Firecrawl rend la page depuis ses propres IP. Payant (1 crédit par
+# page) → appelé UNIQUEMENT quand le navigateur est bloqué, jamais en temps normal.
+FIRECRAWL_ENDPOINT = "https://api.firecrawl.dev/v2/scrape"
+FIRECRAWL_TIMEOUT = 120.0
 
 
 def _resolve_stealth():
@@ -385,7 +405,68 @@ class ScrapeClient:
                 raise DomainCooldownError(domain, self._cooldown_until[domain])
             await asyncio.sleep(2.0)
 
+    async def _render_firecrawl(self, url: str) -> str | None:
+        """Rend la page via Firecrawl, depuis ses IP à lui.
+
+        Sert de repli quand Cloudflare bloque notre navigateur — ce que Cardmarket fait
+        désormais au niveau du pare-feu (403 « Attention Required »), qu'aucun réglage
+        de navigateur ne contourne. Payant, donc jamais appelé tant que Playwright passe.
+        Renvoie None si aucune clé n'est configurée : l'appelant relance alors l'erreur
+        d'origine et le comportement reste celui d'avant.
+        """
+        key = get_settings().firecrawl_api_key
+        if not key:
+            return None
+        await self.start()
+        try:
+            resp = await self._http.post(  # type: ignore[union-attr]
+                FIRECRAWL_ENDPOINT,
+                headers={"Authorization": f"Bearer {key}"},
+                json={"url": url, "formats": ["rawHtml"]},
+                timeout=FIRECRAWL_TIMEOUT,
+            )
+            resp.raise_for_status()
+            html = (resp.json().get("data") or {}).get("rawHtml")
+        except Exception as exc:  # noqa: BLE001 - repli : on ne masque pas l'erreur d'origine
+            log.warning("Repli Firecrawl en échec sur %s : %s", url, exc)
+            return None
+        if not html:
+            return None
+        log.info("Repli Firecrawl utilisé pour %s (1 crédit)", url)
+        return html
+
     async def render(
+        self,
+        url: str,
+        *,
+        wait_selector: str | None = None,
+        min_interval: float | None = None,
+        timeout_ms: int = 30000,
+        scroll: int = 0,
+        locale: str = "fr-FR",
+    ) -> str:
+        """HTML rendu d'une page : navigateur d'abord, Firecrawl si le domaine est bloqué.
+
+        Le repli couvre aussi le cooldown anti-ban : pendant celui-ci on ne touche plus
+        du tout au domaine bloqué, les pages viennent de Firecrawl. Le monitor continue
+        de tourner au lieu de s'arrêter des heures, et l'IP bannie cesse d'être sollicitée.
+        """
+        try:
+            return await self._render_browser(
+                url,
+                wait_selector=wait_selector,
+                min_interval=min_interval,
+                timeout_ms=timeout_ms,
+                scroll=scroll,
+                locale=locale,
+            )
+        except DomainCooldownError:
+            html = await self._render_firecrawl(url)
+            if html is None:
+                raise
+            return html
+
+    async def _render_browser(
         self,
         url: str,
         *,
@@ -411,7 +492,9 @@ class ScrapeClient:
                 await _APPLY_STEALTH(context)
             page = await context.new_page()
             resp = await page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
-            if resp is not None and resp.status == 429:
+            # Le 403 manquait : on rendait la page de blocage, le parseur n'y trouvait rien
+            # et le monitor abandonnait en silence au lieu de basculer sur le repli.
+            if resp is not None and is_blocked(status=resp.status):
                 self._trip_cooldown(domain)
                 raise DomainCooldownError(domain, self._cooldown_until[domain])
             await self._wait_challenge(page, domain)
@@ -427,8 +510,7 @@ class ScrapeClient:
             await asyncio.sleep(random.uniform(0.5, 1.5))
             html = await page.content()
             # Certaines pages de ban Cloudflare arrivent en 200 : on inspecte le HTML.
-            head = html[:5000].lower()
-            if any(marker in head for marker in CF_BAN_MARKERS):
+            if is_blocked(html=html):
                 self._trip_cooldown(domain)
                 raise DomainCooldownError(domain, self._cooldown_until[domain])
             self._note_success(domain)

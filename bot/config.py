@@ -40,6 +40,10 @@ class Settings(BaseSettings):
     vinted_domain: str = Field(default="www.vinted.fr", alias="VINTED_DOMAIN")
     vinted_session_cookie: str = Field(default="", alias="VINTED_SESSION_COOKIE")
 
+    # Firecrawl : repli de rendu quand Cloudflare bloque le navigateur (Cardmarket).
+    # Vide = pas de repli, on garde le comportement d'avant.
+    firecrawl_api_key: str = Field(default="", alias="FIRECRAWL_API_KEY")
+
     # Divers
     timezone: str = Field(default="Europe/Paris", alias="TIMEZONE")
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
