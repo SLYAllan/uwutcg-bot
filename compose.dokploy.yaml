@@ -1,0 +1,40 @@
+# Déploiement par Dokploy sur le serveur maison (phase 4). Coolify utilise encore
+# docker-compose.yaml jusqu'à la migration : ne pas toucher à celui-là avant.
+# TAG : le SHA à déployer, posé par le Dashboard ; sans lui, la dernière image de master.
+services:
+  bot:
+    image: ghcr.io/slyallan/uwutcg-bot:${TAG:-master}
+    restart: unless-stopped
+    # Chromium gonfle (2,2 Go après 11 jours sur le Hetzner) : la limite protège les
+    # sites qui tournent à côté.
+    mem_limit: 3g
+    environment:
+      DISCORD_TOKEN: ${DISCORD_TOKEN:-}
+      DISCORD_APP_ID: ${DISCORD_APP_ID:-}
+      DISCORD_CLIENT_SECRET: ${DISCORD_CLIENT_SECRET:-}
+      DISCORD_GUILD_ID: ${DISCORD_GUILD_ID:-}
+      DEFAULT_TRACK_CHANNEL_ID: ${DEFAULT_TRACK_CHANNEL_ID:-}
+      DAILY_DIGEST_CHANNEL_ID: ${DAILY_DIGEST_CHANNEL_ID:-}
+      EBAY_APP_ID: ${EBAY_APP_ID:-}
+      EBAY_DEV_ID: ${EBAY_DEV_ID:-}
+      EBAY_CERT_ID: ${EBAY_CERT_ID:-}
+      EBAY_MARKETPLACE_ID: ${EBAY_MARKETPLACE_ID:-EBAY_FR}
+      EBAY_ENV: ${EBAY_ENV:-PRODUCTION}
+      VINTED_DOMAIN: ${VINTED_DOMAIN:-www.vinted.fr}
+      VINTED_SESSION_COOKIE: ${VINTED_SESSION_COOKIE:-}
+      # Absente de docker-compose.yaml : Coolify l'injectait seul.
+      FIRECRAWL_API_KEY: ${FIRECRAWL_API_KEY:-}
+      TIMEZONE: ${TIMEZONE:-Europe/Paris}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    volumes:
+      - uwutcg-bot-data:/app/data
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+# Créé à la main sur le serveur, rempli depuis le Hetzner à la migration (annexe E.2).
+volumes:
+  uwutcg-bot-data:
+    external: true

@@ -147,3 +147,10 @@ bot/
   automatiser le checkout Vinted ferait courir un risque de bannissement. Le bouton lien t'amène
   au plus près du paiement (panier eBay / écran d'achat Vinted), la validation reste de ton côté.
 - Ce calculateur est une aide à la décision, pas un avis comptable (taux paramétrables).
+
+## Image et serveur maison
+
+À chaque push sur `master`, `.github/workflows/image.yml` lance les tests dans l'image puis
+la pousse dans GHCR (`ghcr.io/slyallan/uwutcg-bot:<sha>` et `:master`). Sur une PR,
+l'image est construite et testée sans être publiée. `compose.dokploy.yaml` servira au
+déploiement sur le serveur maison ; Coolify utilise encore `docker-compose.yaml`.
