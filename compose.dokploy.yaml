@@ -26,8 +26,12 @@ services:
       FIRECRAWL_API_KEY: ${FIRECRAWL_API_KEY:-}
       TIMEZONE: ${TIMEZONE:-Europe/Paris}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      # Battement vers le Dashboard (U3), par le réseau de Dokploy.
+      DASHBOARD_BATTEMENT_URL: ${DASHBOARD_BATTEMENT_URL:-}
+      DASHBOARD_BATTEMENT_JETON: ${DASHBOARD_BATTEMENT_JETON:-}
     volumes:
       - uwutcg-bot-data:/app/data
+    networks: [dokploy-network]
     logging:
       driver: json-file
       options:
@@ -37,4 +41,9 @@ services:
 # Créé à la main sur le serveur, rempli depuis le Hetzner à la migration (annexe E.2).
 volumes:
   uwutcg-bot-data:
+    external: true
+
+networks:
+  # Le Dashboard répond sous le nom `dashboard` sur ce réseau.
+  dokploy-network:
     external: true

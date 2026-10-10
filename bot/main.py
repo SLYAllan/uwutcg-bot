@@ -12,6 +12,7 @@ import discord
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from discord.ext import commands
 
+from bot import battement
 from bot.config import PricingConfig, get_settings
 from bot.db import Database
 from bot.scrapers.base import ScrapeClient
@@ -111,6 +112,11 @@ class TrackingBot(commands.Bot):
             self._synced = True
 
         self.scheduler.start()
+
+        # Gardée dans un attribut : une tâche sans référence peut être ramassée en route.
+        self._battement = asyncio.create_task(
+            battement.boucle(self.settings.dashboard_battement_url, self.settings.dashboard_battement_jeton)
+        )
 
     async def on_ready(self) -> None:
         log.info("Connecté en tant que %s (id=%s)", self.user, self.user.id if self.user else "?")

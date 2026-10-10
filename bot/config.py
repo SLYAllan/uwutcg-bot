@@ -47,6 +47,9 @@ class Settings(BaseSettings):
     # Divers
     timezone: str = Field(default="Europe/Paris", alias="TIMEZONE")
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
+    # Battement vers le Dashboard du serveur maison (U3) ; vides = battement coupé.
+    dashboard_battement_url: str = Field(default="", alias="DASHBOARD_BATTEMENT_URL")
+    dashboard_battement_jeton: str = Field(default="", alias="DASHBOARD_BATTEMENT_JETON")
     db_path: str = Field(default="data/bot.db", alias="DB_PATH")
     knowledge_dir: str = Field(default="knowledge", alias="KNOWLEDGE_DIR")
     pricing_config: str = Field(default="pricing.yaml", alias="PRICING_CONFIG")
